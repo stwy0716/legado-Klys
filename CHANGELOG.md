@@ -1,5 +1,30 @@
 # 更新日志
 
+## v1.0.0（正式版）
+- 发布首个正式版，版本号统一为 1.0.0
+- 更换全新应用图标（青绿书本），同步更新 Android 各密度图标与 iOS AppIcon 全套尺寸
+- 新增 iOS 构建支持：CI 在 macOS 上自动补全 iOS 工程并编译校验（未签名 Runner.app 作为构建产物）
+- 新增书源登录页（WebView 登录 / 表单登录）与软件信息页（关于、检查更新、开源协议）
+- 修复相对 import 路径错误，书源聚合搜索、发现、登录、Cookie 持久化等链路实测可用
+
+## v3.26.12（搜索书源专项 + 正式签名）
+- 修复搜索书源搜不到（核心）：搜索/发现 URL 模板对齐原版 AnalyzeUrl——`{{key}}`/`{{searchKey}}` 改为替换为**原始关键词**（此前被百分号编码，部分站点返回空/错误页），新增原版 `<1,2,3>` 页码列表替换（按页取第 N 项、越界取最后），保留 `{{page}}` 与 `{{(page-1)*N}}`
+- 书架搜索直达书源：书架页搜索框输入时，顶部新增"用书源搜索「关键词」"入口，直接以该关键词搜索全部启用书源（不再只过滤本地书架）；SearchScreen 支持初始关键词自动搜索
+- 新增端到端集成测试（本地 HTTP 服务模拟书源站点）：中文关键词不编码真实可达、页码列表 `<1,2,3>`、`{{page}}` 与 `{{(page-1)*N}}` 三条全部通过，证明"搜索书源的书"链路真实可用
+- 配置 Android 正式签名：生成 `android/keystore/legado_md3.jks`（RSA 2048 / 30 年有效），`android/key.properties` 存密码，`build.gradle` 的 release 构建使用正式签名（key.properties 缺失时回退 debug 签名），key.properties 与 keystore 加入 .gitignore
+- README 增加签名说明与 APK 产物路径
+
+## v3.26.11（书源登录专项：登录流程可用 + 引擎字段全面接通）
+- 书源登录真正可用（此前"登录"只是把用户名写进书源变量，无密码/无 Cookie/无校验）：新增登录页 `SourceLoginScreen`，完全对齐原版语义——loginUi 为空时走 **WebView 登录**（加载 loginUrl，页面加载即保存该域 Cookie，右上角确认完成）；loginUi 为 JSON 数组（RowUi: text/password/toggle/select/button）时渲染 **表单登录**（button 执行 action 脚本），登录信息持久化保存
+- Cookie 持久化：CookieManager 由内存存储改为 shared_preferences 落盘（重启不丢），引擎请求自动携带同域 Cookie、响应回存 Set-Cookie、登录 Cookie 直接写入——登录态跨重启有效
+- loginCheckJs 消费（对齐原版）：搜索/发现/详情/目录/正文/分页 6 处响应后执行校验脚本，结果为空/假/0/-1 判定未登录并抛出"书源需要登录"提示
+- 登录信息注入：登录页保存的字段在抓取时自动注入 JS 全局变量，其中的 Cookie 自动加入请求头
+- header 规则支持 `@js:` / `<js>` 动态生成（对齐原版 getHeaderMap）
+- jsLib 接通：提取其中的 var/let/const 赋值注入为全局变量（函数定义需完整 JS 引擎，不支持）
+- bookUrlPattern 消费：详情 URL 不匹配书源正则时跳过该书源（对齐原版）
+- coverDecodeJs 消费：封面地址经解密脚本处理后使用
+- 移除假登录入口，管理页"登录"菜单打开真登录页
+
 ## v3.26.10（书源规则引擎专项修复）
 - 修复调试功能不可用（用户反馈核心问题）：调试页搜索成功打印简介时 `b.intro!.length` 空简介抛空指针中断整条流程；发现 Tab 忽略输入的 URL、永远抓第一条分类。整页重写——日志改读引擎真实调试日志（请求/响应/规则匹配/异常），新增“原始响应”查看（弹窗展示最近一次抓取文本，超 2 万字截断），发现 Tab 真正按输入 URL 执行 exploreByUrl
 - 引擎新增规则级调试日志（最近 120 条环形）：搜索/发现/详情/目录/正文/分页各阶段输出 URL、规则原文、命中元素数、提取结果数、详情字段取值、分页拼接值；新增 lastRawResponse 记录最近响应

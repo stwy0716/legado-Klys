@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:legado_md3/ui/main/my/about_screen.dart';
 import 'package:legado_md3/help/web/web_service.dart';
 import 'package:legado_md3/ui/config/theme_manage_screen.dart';
 import 'package:legado_md3/ui/config/cover_config_screen.dart';
@@ -166,6 +167,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
         children: [
+          _buildGroupCard('通用', [
           // 主题设置
           ListTile(
             leading: const Icon(Icons.tune),
@@ -174,7 +176,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const OtherConfigScreen())),
           ),
-          _buildSectionHeader('主题设置'),
+          ]),
+          _buildGroupCard('主题设置', [
           SwitchListTile(
             title: const Text('深色模式'),
             subtitle: Text(theme.themeMode == ThemeMode.dark ? '已开启' : theme.themeMode == ThemeMode.system ? '跟随系统' : '已关闭'),
@@ -197,10 +200,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CoverConfigScreen())),
           ),
-          const Divider(),
 
-          // 阅读设置
-          _buildSectionHeader('阅读设置'),
+          ]),
+          _buildGroupCard('阅读设置', [
           ListTile(
             title: const Text('翻页动画'),
             trailing: DropdownButton<int>(
@@ -283,10 +285,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _showPageNumber,
             onChanged: (v) => setState(() { _showPageNumber = v; _saveSetting('show_page_number', v); }),
           ),
-          const Divider(),
 
-          // 网络和更新
-          _buildSectionHeader('网络和更新'),
+          ]),
+          _buildGroupCard('网络和更新', [
           SwitchListTile(
             title: const Text('自动更新'),
             subtitle: const Text('启动时自动检查书籍更新'),
@@ -316,10 +317,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onChanged: (v) => setState(() { _preDownloadCount = v ?? 5; _saveSetting('pre_download_count', _preDownloadCount); }),
             ),
           ),
-          const Divider(),
 
-          // 数据管理
-          _buildSectionHeader('数据管理'),
+          ]),
+          _buildGroupCard('数据管理', [
           ListTile(
             leading: const Icon(Icons.backup_outlined),
             title: const Text('备份与恢复'),
@@ -338,10 +338,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: const Text('清除书籍内容缓存'),
             onTap: () => _showClearCacheDialog(),
           ),
-          const Divider(),
 
-          // 主题管理
-          _buildSectionHeader('主题管理'),
+          ]),
+          _buildGroupCard('主题管理', [
           ListTile(
             leading: const Icon(Icons.palette_outlined),
             title: const Text('自定义主题'),
@@ -359,14 +358,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const Divider(),
 
-          // TTS设置
           ListTile(
             leading: const Icon(Icons.photo_library_outlined),
             title: const Text('漫画阅读设置'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MangaConfigScreen())),
           ),
-          _buildSectionHeader('TTS设置'),
+          ]),
+          _buildGroupCard('TTS设置', [
           ListTile(
             leading: const Icon(Icons.record_voice_over_outlined),
             title: const Text('TTS引擎管理'),
@@ -393,10 +392,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
 
-          const Divider(),
 
-          // 下载缓存
-          _buildSectionHeader('下载缓存'),
+          ]),
+          _buildGroupCard('下载缓存', [
           ListTile(
             leading: const Icon(Icons.tune),
             title: const Text('下载缓存配置'),
@@ -419,10 +417,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CacheManageScreen())),
           ),
 
-          const Divider(),
 
-          // 翻译设置
-          _buildSectionHeader('翻译设置'),
+          ]),
+          _buildGroupCard('翻译设置', [
           SwitchListTile(
             title: const Text('启用翻译'),
             value: _translateEnabled,
@@ -436,10 +433,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TranslationScreen())),
           ),
 
-          const Divider(),
 
-          // 实验室
-          _buildSectionHeader('实验室'),
+          ]),
+          _buildGroupCard('实验室', [
           SwitchListTile(
             title: const Text('模拟阅读'),
             subtitle: const Text('自动模拟翻页阅读'),
@@ -447,10 +443,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (v) async { await _prefs?.setBool('simulate_reading', v); setState(() => _simulateReading = v); },
           ),
 
-          const Divider(),
 
-          // 其他
-          _buildSectionHeader('Web服务'),
+          ]),
+          _buildGroupCard('Web服务', [
           SwitchListTile(
             title: const Text('启用Web服务'),
             subtitle: const Text('通过浏览器管理书籍'),
@@ -471,7 +466,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => _showWebPasswordDialog(),
           ),
 
-          _buildSectionHeader('备份和恢复'),
+          ]),
+          _buildGroupCard('备份和恢复', [
           ListTile(
             leading: const Icon(Icons.backup),
             title: const Text('本地备份'),
@@ -507,7 +503,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (v) => setState(() { _autoBackup = v; _saveSetting('auto_backup', v); }),
           ),
 
-          _buildSectionHeader('缓存管理'),
+          ]),
+          _buildGroupCard('缓存管理', [
           ListTile(
             leading: const Icon(Icons.cleaning_services),
             title: const Text('清理缓存'),
@@ -529,7 +526,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (v) => setState(() { _autoCleanCache = v; _saveSetting('auto_clean_cache', v); }),
           ),
 
-          _buildSectionHeader('规则管理'),
+          ]),
+          _buildGroupCard('规则管理', [
           ListTile(
             leading: const Icon(Icons.find_replace),
             title: const Text('替换净化规则'),
@@ -559,7 +557,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => _showHighlightRuleScreen(),
           ),
 
-          _buildSectionHeader('首页模块'),
+          ]),
+          _buildGroupCard('首页模块', [
           ListTile(
             leading: const Icon(Icons.view_module),
             title: const Text('首页模块管理'),
@@ -568,7 +567,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => _showHomepageModuleScreen(),
           ),
 
-          _buildSectionHeader('其他'),
+          ]),
+          _buildGroupCard('其他', [
           SwitchListTile(
             title: const Text('显示通知栏'),
             value: _showNotification,
@@ -581,20 +581,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           ListTile(
             leading: const Icon(Icons.info_outline),
-            title: const Text('关于'),
+            title: const Text('软件信息'),
+            subtitle: const Text('版本/更新/下载/开源协议'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => _showAboutDialog(),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AboutScreen())),
           ),
           const SizedBox(height: 24),
+          ]),
         ],
       ),
     );
   }
 
-  Widget _buildSectionHeader(String title) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-    child: Text(title, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary)),
-  );
+  /// Miuix 风格分组卡片：标题 + 圆角卡片（项之间内置分割线）
+  Widget _buildGroupCard(String title, List<Widget> children) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          child: Text(title,
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.primary)),
+        ),
+        Card(
+          margin: EdgeInsets.zero,
+          elevation: 0,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(128),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          clipBehavior: Clip.antiAlias,
+          child: Column(children: [
+            for (var i = 0; i < children.length; i++) ...[
+              if (i > 0) Divider(height: 1, indent: 56, color: Theme.of(context).colorScheme.outlineVariant.withAlpha(80)),
+              children[i],
+            ],
+          ]),
+        ),
+      ]),
+    );
+  }
 
   void _showColorPicker(AppTheme theme) {
     showDialog(
@@ -685,20 +710,4 @@ class _SettingsScreenState extends State<SettingsScreen> {
     Navigator.push(context, MaterialPageRoute(builder: (_) => const HomepageManageScreen()));
   }
 
-  void _showAboutDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('关于阅读 MD3'),
-        content: const Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('版本: 3.26.7'),
-          SizedBox(height: 8),
-          Text('基于Legado MD3风格的跨平台阅读应用'),
-          SizedBox(height: 8),
-          Text('支持Android和iOS'),
-        ]),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('确定'))],
-      ),
-    );
-  }
 }

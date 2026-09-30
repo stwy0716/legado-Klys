@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'dart:async';
 import '../../constant/app_constants.dart';
 import 'cookie_manager.dart';
 
@@ -27,7 +28,7 @@ class HttpClient {
       },
       onResponse: (response, handler) {
         final raw = response.headers.map['set-cookie'];
-        cookies.saveFromResponse(response.realUri.toString(), raw);
+        unawaited(cookies.saveFromResponse(response.realUri.toString(), raw));
         handler.next(response);
       },
     ));

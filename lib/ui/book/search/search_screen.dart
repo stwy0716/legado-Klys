@@ -11,9 +11,11 @@ import 'package:legado_md3/di/book_provider.dart';
 import 'package:legado_md3/data/local/app_database.dart';
 import 'package:legado_md3/help/source/source_engine.dart';
 import 'package:legado_md3/ui/book/detail/book_detail_screen.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({super.key});
+  final String? initialKeyword;
+  const SearchScreen({super.key, this.initialKeyword});
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -38,6 +40,10 @@ class _SearchScreenState extends State<SearchScreen> {
   void initState() {
     super.initState();
     _loadHistory();
+    final kw = widget.initialKeyword;
+    if (kw != null && kw.trim().isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _search(kw));
+    }
   }
 
   @override
@@ -314,7 +320,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _buildResultTile(SearchBook book) => ListTile(
     leading: book.coverUrl != null && book.coverUrl!.isNotEmpty
-        ? ClipRRect(borderRadius: BorderRadius.circular(4), child: Image.network(book.coverUrl!, width: 50, height: 70, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _buildDefaultCover(book.name)))
+        ? ClipRRect(borderRadius: BorderRadius.circular(4), child: CachedNetworkImage(imageUrl: book.coverUrl!, width: 50, height: 70, fit: BoxFit.cover, placeholder: (_, __) => _buildDefaultCover(book.name), errorWidget: (_, __, ___) => _buildDefaultCover(book.name)))
         : _buildDefaultCover(book.name),
     title: Text(book.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w500)),
     subtitle: Column(

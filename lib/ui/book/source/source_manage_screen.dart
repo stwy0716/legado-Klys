@@ -11,6 +11,7 @@ import 'package:legado_md3/data/model/book_source.dart';
 import 'package:legado_md3/data/local/app_database.dart';
 import 'package:legado_md3/ui/book/source/source_edit_screen.dart';
 import 'package:legado_md3/ui/book/source/source_debug_screen.dart';
+import 'package:legado_md3/ui/book/source/source_login_screen.dart';
 
 class SourceManageScreen extends StatefulWidget {
   const SourceManageScreen({super.key});
@@ -31,6 +32,10 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
   bool _groupByDomain = false;
   final Set<String> _selectedIds = {};
   List<String> _groups = [];
+  // 过滤结果缓存：书源多时避免每次 setState 全量排序导致卡顿
+  List<BookSource>? _filterCache;
+  int _enabledCount = 0;
+  int _disabledCount = 0;
 
   @override
   void initState() {
@@ -47,10 +52,20 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
         .toSet()
         .toList()
       ..sort();
+    _invalidateFilter();
     if (mounted) setState(() => _isLoading = false);
   }
 
+  void _invalidateFilter() {
+    _filterCache = null;
+    _enabledCount = 0;
+    for (final s in _sources) { if (s.enabled == true) _enabledCount++; }
+    _disabledCount = _sources.length - _enabledCount;
+  }
+
   List<BookSource> get _filteredSources {
+    final cached = _filterCache;
+    if (cached != null) return cached;
     var result = _sources;
     if (_selectedGroup != null) {
       result = result.where((s) => s.bookSourceGroup == _selectedGroup).toList();
@@ -72,37 +87,21 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
       case 5: result.sort((a, b) => _sortAsc ? (a.respondTime ?? 0).compareTo(b.respondTime ?? 0) : (b.respondTime ?? 0).compareTo(a.respondTime ?? 0)); break;
       case 6: result.sort((a, b) => _sortAsc ? (a.enabled ? 0 : 1).compareTo(b.enabled ? 0 : 1) : (b.enabled ? 0 : 1).compareTo(a.enabled ? 0 : 1)); break;
     }
+    _filterCache = result;
     return result;
   }
 
   Future<void> _toggleSource(BookSource source, bool enabled) async {
     source.enabled = enabled;
+    _invalidateFilter();
     await _db.updateSource(source);
     setState(() {});
   }
 
   void _showSourceLogin(BookSource source) {
-    final userController = TextEditingController();
-    final passController = TextEditingController();
-    showDialog(context: context, builder: (context) => AlertDialog(
-      title: Text('登录 - ${source.bookSourceName}'),
-      content: Column(mainAxisSize: MainAxisSize.min, children: [
-        TextField(controller: userController, decoration: const InputDecoration(labelText: '用户名/账号', prefixIcon: Icon(Icons.person_outline))),
-        const SizedBox(height: 12),
-        TextField(controller: passController, obscureText: true, decoration: const InputDecoration(labelText: '密码', prefixIcon: Icon(Icons.lock_outline))),
-        const SizedBox(height: 8),
-        const Text('登录信息将保存到书源变量中', style: TextStyle(fontSize: 11, color: Colors.grey)),
-      ]),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-        FilledButton(onPressed: () async {
-          if (userController.text.isEmpty) return;
-          source.variable = (source.variable ?? '') + '\nloginUser=${userController.text}';
-          await _db.updateSource(source);
-          if (mounted) { Navigator.pop(context); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('登录信息已保存'))); }
-        }, child: const Text('登录')),
-      ],
-    ));
+    // 对齐原版：loginUi 为空走 WebView 登录，否则渲染表单；登录信息与 Cookie 持久化
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => SourceLoginScreen(source: source)));
   }
 
   Future<void> _deleteSource(BookSource source) async {
@@ -401,10 +400,10 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
           title: Text(sortNames[index]),
           value: index,
           groupValue: _sortBy,
-          onChanged: (v) => setState(() { _sortBy = v ?? 0; Navigator.pop(context); }),
+          onChanged: (v) => setState(() { _sortBy = v ?? 0; _invalidateFilter(); Navigator.pop(context); }),
         )),
         const Divider(),
-        SwitchListTile(title: const Text('降序排列'), value: !_sortAsc, onChanged: (v) => setState(() => _sortAsc = !v)),
+        SwitchListTile(title: const Text('降序排列'), value: !_sortAsc, onChanged: (v) => setState(() { _sortAsc = !v; _invalidateFilter(); })),
       ]),
     ));
   }
@@ -563,10 +562,12 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
               switch (value) {
                 case 'enable_all':
                   for (final s in _sources) { s.enabled = true; _db.updateSource(s); }
+                  _invalidateFilter();
                   setState(() {});
                   break;
                 case 'disable_all':
                   for (final s in _sources) { s.enabled = false; _db.updateSource(s); }
+                  _invalidateFilter();
                   setState(() {});
                   break;
                 case 'select_mode':
@@ -593,6 +594,17 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
       ),
       body: Column(
         children: [
+          // 书源统计条
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Row(children: [
+              Text('共 ${_sources.length} 个书源', style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              const SizedBox(width: 16),
+              Text('启用 $_enabledCount', style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.primary)),
+              const SizedBox(width: 16),
+              Text('禁用 $_disabledCount', style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.outline)),
+            ]),
+          ),
           if (_groups.isNotEmpty)
             Container(
               height: 48,
@@ -603,7 +615,7 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
                   FilterChip(
                     label: const Text('全部'),
                     selected: _selectedGroup == null,
-                    onSelected: (_) => setState(() => _selectedGroup = null),
+                    onSelected: (_) => setState(() { _selectedGroup = null; _invalidateFilter(); }),
                   ),
                   const SizedBox(width: 8),
                   ..._groups.map((g) => Padding(
@@ -611,7 +623,7 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
                     child: FilterChip(
                       label: Text(g),
                       selected: _selectedGroup == g,
-                      onSelected: (_) => setState(() => _selectedGroup = g),
+                      onSelected: (_) => setState(() { _selectedGroup = g; _invalidateFilter(); }),
                     ),
                   )),
                 ],
@@ -644,13 +656,28 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
                           ),
                         ),
                         title: Text(source.bookSourceName, maxLines: 1, overflow: TextOverflow.ellipsis),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(source.bookSourceUrl, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)),
-                            if (source.bookSourceGroup != null && source.bookSourceGroup!.isNotEmpty)
-                              Text('分组: ${source.bookSourceGroup}', style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.primary)),
-                          ],
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(source.bookSourceUrl, maxLines: 1, overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.outline)),
+                              if (source.bookSourceGroup != null && source.bookSourceGroup!.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context).colorScheme.secondaryContainer.withAlpha(150),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(source.bookSourceGroup!,
+                                        style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSecondaryContainer)),
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
                         trailing: _selectMode ? null : Switch(
                           value: source.enabled == true,

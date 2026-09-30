@@ -54,8 +54,14 @@ class _BookshelfScreenState extends State<BookshelfScreen> {
     super.dispose();
   }
 
+  // 过滤缓存：Provider 数据/查询/排序任一变化才重算（书多时避免每次 build 全量排序卡顿）
+  List<Book>? _booksCache;
+  String? _booksCacheKey;
+
   List<Book> get _filteredBooks {
     final provider = Provider.of<BookProvider>(context, listen: false);
+    final key = '${identityHashCode(provider.filteredBooks)}|$_searchQuery|$_sortBy|$_sortAsc';
+    if (_booksCache != null && _booksCacheKey == key) return _booksCache!;
     var books = provider.filteredBooks;
     if (_searchQuery.isNotEmpty) {
       books = books.where((b) =>
@@ -70,6 +76,8 @@ class _BookshelfScreenState extends State<BookshelfScreen> {
       case 4: books.sort((a, b) => _sortAsc ? (a.lastCheckTime ?? 0).compareTo(b.lastCheckTime ?? 0) : (b.lastCheckTime ?? 0).compareTo(a.lastCheckTime ?? 0)); break;
       case 5: books.sort((a, b) => _sortAsc ? (a.wordCount ?? 0).compareTo(b.wordCount ?? 0) : (b.wordCount ?? 0).compareTo(a.wordCount ?? 0)); break;
     }
+    _booksCache = books;
+    _booksCacheKey = key;
     return books;
   }
 
@@ -212,7 +220,7 @@ class _BookshelfScreenState extends State<BookshelfScreen> {
         ],
         bottom: PreferredSize(preferredSize: const Size.fromHeight(48), child: _buildGroupTabs(provider)),
       ),
-      body: _isUpdating ? const Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [CircularProgressIndicator(), SizedBox(height: 16), Text('正在更新...')])) : books.isEmpty ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.menu_book_outlined, size: 64, color: Colors.grey[400]), const SizedBox(height: 16), Text('书架为空', style: TextStyle(color: Colors.grey[600], fontSize: 16)), const SizedBox(height: 8), Text('去搜索或发现页面添加书籍', style: TextStyle(color: Colors.grey[500])), const SizedBox(height: 24), FilledButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SearchScreen())), icon: const Icon(Icons.search), label: const Text('去搜索'))])) : _buildBookList(books, layout),
+      body: _isUpdating ? const Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [CircularProgressIndicator(), SizedBox(height: 16), Text('正在更新...')])) : _searchQuery.isNotEmpty ? _buildSearchMode(provider) : books.isEmpty ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.menu_book_outlined, size: 64, color: Colors.grey[400]), const SizedBox(height: 16), Text('书架为空', style: TextStyle(color: Colors.grey[600], fontSize: 16)), const SizedBox(height: 8), Text('去搜索或发现页面添加书籍', style: TextStyle(color: Colors.grey[500])), const SizedBox(height: 24), FilledButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SearchScreen())), icon: const Icon(Icons.search), label: const Text('去搜索'))])) : _buildBookList(books, layout),
       bottomNavigationBar: _selectMode ? SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
         const Divider(height: 1),
         Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
@@ -224,6 +232,41 @@ class _BookshelfScreenState extends State<BookshelfScreen> {
         Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4), child: Align(alignment: Alignment.centerLeft, child: Text('已选 ${_selectedBooks.length} 本', style: const TextStyle(fontSize: 12, color: Colors.grey)))),
       ])) : null,
     );
+  }
+
+  Widget _buildSearchMode(BookProvider provider) {
+    final books = _filteredBooks;
+    return Column(children: [
+      // 用书源搜索入口：本地书架过滤结果之外，直接以关键词搜索全部书源
+      Material(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        child: InkWell(
+          onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => SearchScreen(initialKeyword: _searchQuery.trim()))),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(children: [
+              Icon(Icons.travel_explore, size: 18, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 8),
+              Expanded(child: Text(
+                '用书源搜索「${_searchQuery.trim()}」（本地书架 ${books.length} 本）',
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.primary),
+              )),
+              const Icon(Icons.chevron_right, size: 18),
+            ]),
+          ),
+        ),
+      ),
+      const Divider(height: 1),
+      Expanded(
+        child: books.isEmpty
+            ? Center(child: Text('书架中没有匹配「${_searchQuery.trim()}」的书，点上方用书源搜索',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey[600], fontSize: 14)))
+            : _buildBookList(books, provider.bookshelfLayout),
+      ),
+    ]);
   }
 
   Widget _buildGroupTabs(BookProvider provider) => Container(height: 48, padding: const EdgeInsets.symmetric(horizontal: 8), child: ListView(scrollDirection: Axis.horizontal, children: [

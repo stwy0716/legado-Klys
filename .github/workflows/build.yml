@@ -1,78 +1,128 @@
-name: Build APK
+name: Build & Release
+
 on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
+
 jobs:
-  build:
+  # ============ Android：构建双 APK 并发正式 Release ============
+  build-android:
+    name: Build Android APK
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.24.0'
           channel: 'stable'
+
       - name: Install dependencies
         run: flutter pub get
-      - name: Build Release APK (universal)
+
+      - name: Build universal APK
         run: |
           flutter build apk --release
           cp build/app/outputs/flutter-apk/app-release.apk /tmp/app-universal-release.apk
+
       - name: Build arm64 APK
         run: |
           flutter build apk --release --target-platform android-arm64
           cp build/app/outputs/flutter-apk/app-release.apk /tmp/app-arm64-release.apk
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: legado-md3-apk
-          path: |
-            /tmp/app-universal-release.apk
-            /tmp/app-arm64-release.apk
-          retention-days: 30
-      - name: Generate version tag
-        id: version
+
+      - name: Read version
+        id: ver
         run: |
-          TAG="v3.26.7-$(date +%Y%m%d-%H%M%S)"
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Delete old prereleases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Deleting old prereleases..."
           gh release list --limit 100 --json tagName,isPrerelease --jq '.[] | select(.isPrerelease) | .tagName' | while read -r tag; do
             [ -z "$tag" ] && continue
             echo "Deleting old prerelease: $tag"
             gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
           done
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Create Prerelease
+
+      - name: Create stable Release v${{ steps.ver.outputs.version }}
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: "Legado MD3 ${{ steps.version.outputs.tag }} (预发布)"
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: "Legado MD3 v${{ steps.ver.outputs.version }} 正式版"
           body: |
-            ## Legado MD3 自动构建
-            
+            ## Legado MD3 v${{ steps.ver.outputs.version }} 正式版
+
             - 提交: ${{ github.sha }}
-            - 分支: ${{ github.ref_name }}
-            
-            ### 下载
-            - `app-universal-release.apk` - 通用版（支持所有架构）
-            - `app-arm64-release.apk` - arm64专用版（更小）
-            
-            > 此为自动构建的预发布版本。
-          prerelease: true
+            - 框架: Flutter 3.24（Android / iOS 双端）
+
+            ### Android 下载
+            - `app-universal-release.apk` — 通用包（所有架构）
+            - `app-arm64-release.apk` — arm64 专用（体积更小）
+
+            ### iOS
+            iOS 端由 CI 在 macOS 上编译校验并产出未签名 `Runner.app`（见本次构建的 Artifacts）。
+            安装到 iPhone 或上架 App Store 需在 macOS + Xcode 中配置 Apple 开发者签名后归档。
+
+            > 本项目基于 GPL-3.0 开源。
+          prerelease: false
+          make_latest: 'true'
           files: |
             /tmp/app-universal-release.apk
             /tmp/app-arm64-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============ iOS：macOS 上补全工程并编译（未签名，校验可构建） ============
+  build-ios:
+    name: Build iOS (no-codesign)
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Recreate missing iOS project files
+        run: |
+          # 仓库中的 iOS 工程缺少 Runner.xcodeproj / storyboard，
+          # flutter create 仅补齐缺失文件，不覆盖已存在的 Info.plist、图标、AppDelegate、Podfile。
+          flutter create --platforms=ios --org com.legado .
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Install pods
+        working-directory: ios
+        run: |
+          pod install --repo-update || pod install
+
+      - name: Build iOS (release, no codesign)
+        run: flutter build ios --release --no-codesign
+
+      - name: Upload unsigned Runner.app
+        uses: actions/upload-artifact@v4
+        with:
+          name: legado-ios-unsigned-Runner-app
+          path: build/ios/iphoneos/Runner.app
+          if-no-files-found: error
+          retention-days: 30
