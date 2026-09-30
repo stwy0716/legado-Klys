@@ -89,9 +89,13 @@ jobs:
   build-ios:
     name: Build iOS (no-codesign)
     runs-on: macos-14
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -126,3 +130,20 @@ jobs:
           path: build/ios/iphoneos/Runner.app
           if-no-files-found: error
           retention-days: 30
+
+      # 把 flutter create 生成的标准 iOS 工程文件回传到仓库，使仓库 iOS 工程开箱完整
+      - name: Commit regenerated iOS project
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "stwy0716"
+          git config user.email "191060000+stwy0716@users.noreply.github.com"
+          git add ios/
+          if git diff --cached --quiet; then
+            echo "iOS 工程无新增文件，无需回传"
+          else
+            echo "回传以下 iOS 工程文件："
+            git diff --cached --name-only
+            git commit -m "chore(ios): 补全 Flutter 标准 iOS 工程(Runner.xcodeproj/workspace/storyboard) [skip ci]"
+            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
+          fi
