@@ -53,8 +53,3 @@ ios/Runner.xcworkspace/xcuserdata/
 # 构建产物
 release_apk/
 *.apk
-
-# Release 签名材料（严禁提交）
-/android/key.properties
-*.jks
-*.keystore

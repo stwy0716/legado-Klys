@@ -29,6 +29,9 @@ class RulePipeline {
   String? keyword;
   int? page;
 
+  /// 书源级全局变量（variable 字段），注入到所有 JS 求值
+  Map<String, dynamic>? sourceVars;
+
   // ============================== 文本级 ==============================
 
   /// 从一整段响应文本按规则取“字符串列表”
@@ -60,7 +63,7 @@ class RulePipeline {
     final jsWrap = RegExp(r'^<js>([\s\S]*?)</js>$').firstMatch(rule.trim());
     if (jsWrap != null) {
       final r = JsMiniEvaluator.eval(jsWrap.group(1)!,
-          result: raw, key: keyword, page: page, baseUrl: baseUrl);
+          result: raw, key: keyword, page: page, baseUrl: baseUrl, vars: sourceVars);
       return _nullEmpty(r);
     }
 
@@ -81,7 +84,7 @@ class RulePipeline {
       case RuleMode.js:
         final script = core.startsWith('@js:') ? core.substring(4) : core;
         final r = JsMiniEvaluator.eval(script,
-            result: raw, key: keyword, page: page, baseUrl: baseUrl);
+            result: raw, key: keyword, page: page, baseUrl: baseUrl, vars: sourceVars);
         values = _nullEmpty(r);
         break;
       case RuleMode.json:
@@ -118,7 +121,7 @@ class RulePipeline {
     final tailJs = parsed.tailJs;
     if (tailJs != null && values.isNotEmpty) {
       values = values
-          .map((v) => JsMiniEvaluator.eval(tailJs, result: v, key: keyword, page: page, baseUrl: baseUrl) ?? v)
+          .map((v) => JsMiniEvaluator.eval(tailJs, result: v, key: keyword, page: page, baseUrl: baseUrl, vars: sourceVars) ?? v)
           .toList();
     }
 
@@ -167,13 +170,7 @@ class RulePipeline {
     if (listRule.trim().isEmpty) return root is List ? root : [];
     final first = _splitTop(listRule.trim(), ['||']).first.trim();
     final core = _splitPostProcess(first).selector;
-    final r = JsonPath.select(root, _stripJsonPrefix(core));
-    // `$.data` 直接命中数组字段时，select 会把整个数组作为单个命中值返回；
-    // 列表规则需要的是数组里的每个节点，故展开一层。
-    if (r.length == 1 && r[0] is List) {
-      return List<dynamic>.from(r[0] as List);
-    }
-    return r;
+    return JsonPath.select(root, _stripJsonPrefix(core));
   }
 
   /// 相对一个 JSON item 取字段
@@ -188,74 +185,20 @@ class RulePipeline {
       final script = r.startsWith('@js:') ? r.substring(4) : parsed.selector;
       value = JsMiniEvaluator.eval(script,
           result: item is String ? item : jsonEncode(item),
-          key: keyword, page: page, baseUrl: baseUrl);
+          key: keyword, page: page, baseUrl: baseUrl, vars: sourceVars);
     } else if (parsed.selector.isEmpty) {
       value = item?.toString();
     } else {
       final v = JsonPath.selectFirst(item, _stripJsonPrefix(parsed.selector));
-      // 选中对象/数组时输出合法 JSON，标量转字符串
-      value = v == null
-          ? null
-          : (v is Map || v is List ? jsonEncode(v) : v.toString());
+      value = v?.toString();
     }
     if (value == null) return null;
     value = _applyPostOps(value, parsed.ops);
     final tail = parsed.tailJs;
     if (tail != null) {
-      value = JsMiniEvaluator.eval(tail, result: value, key: keyword, page: page, baseUrl: baseUrl) ?? value;
+      value = JsMiniEvaluator.eval(tail, result: value, key: keyword, page: page, baseUrl: baseUrl, vars: sourceVars) ?? value;
     }
     return value.isEmpty ? null : value;
-  }
-
-  // ===================== 供异步 JS 引擎复用的公共解析能力 =====================
-
-  /// 解析字段规则为：选择器 / 后处理操作 / 尾部 JS / 是否含 mustache。
-  FieldRuleParts parseFieldParts(String rule) {
-    final p = _splitPostProcess(rule.trim());
-    final ops = <FieldOp>[];
-    for (final op in p.ops) {
-      switch (op.kind) {
-        case _OpKind.remove:
-          ops.add(FieldOp('remove', op.pattern, null));
-          break;
-        case _OpKind.replace:
-          ops.add(FieldOp('replace', op.pattern, op.replacement));
-          break;
-        case _OpKind.match:
-          ops.add(FieldOp('match', op.pattern, null));
-          break;
-      }
-    }
-    return FieldRuleParts(
-      selector: p.selector,
-      ops: ops,
-      tailJs: p.tailJs,
-      hasInterpolation: p.hasInterpolation,
-    );
-  }
-
-  /// 对取到的原始值执行 ## 后处理操作。
-  String applyFieldOps(String value, List<FieldOp> ops) {
-    final internal = ops.map((o) {
-      switch (o.kind) {
-        case 'replace':
-          return _PostOp.replace(o.pattern, o.replacement ?? '');
-        case 'match':
-          return _PostOp.match(o.pattern);
-        default:
-          return _PostOp.remove(o.pattern);
-      }
-    }).toList();
-    return _applyPostOps(value, internal);
-  }
-
-  /// 纯 JSONPath 选择（不含 JS），供引擎在 JS 之外复用。
-  dynamic jsonPathFirst(dynamic node, String selector) {
-    final s = selector.trim();
-    if (s.isEmpty) return node?.toString();
-    final v = JsonPath.selectFirst(node, _stripJsonPrefix(s));
-    if (v == null) return null;
-    return (v is Map || v is List) ? jsonEncode(v) : v.toString();
   }
 
   // ============================== 各模式实现 ==============================
@@ -492,10 +435,10 @@ class RulePipeline {
 
   _ParsedRule _splitPostProcess(String rule) {
     final result = _ParsedRule();
-    // 提取结尾 @js:
+    // 提取结尾 @js:（仅当出现在规则中间/末尾；整条规则以 @js: 开头时是主规则，不剥离）
     final jsIdx = _findTop(rule, '@js:');
     var body = rule;
-    if (jsIdx >= 0) {
+    if (jsIdx > 0) {
       result.tailJs = rule.substring(jsIdx + 4);
       body = rule.substring(0, jsIdx);
     }
@@ -550,7 +493,7 @@ class RulePipeline {
     if (template == null || !template.contains('{{')) return value;
     return template.replaceAllMapped(RegExp(r'\{\{([\s\S]*?)\}\}'), (m) {
       final script = m.group(1)!;
-      return JsMiniEvaluator.eval(script, result: value, key: keyword, page: page, baseUrl: baseUrl) ?? '';
+      return JsMiniEvaluator.eval(script, result: value, key: keyword, page: page, baseUrl: baseUrl, vars: sourceVars) ?? '';
     });
   }
 
@@ -708,27 +651,6 @@ class _ParsedRule {
   final List<_PostOp> ops = [];
   String? tailJs;
   bool hasInterpolation = false;
-}
-
-/// 字段规则拆解结果（供异步 JS 引擎使用）。
-class FieldRuleParts {
-  FieldRuleParts({
-    required this.selector,
-    required this.ops,
-    this.tailJs,
-    this.hasInterpolation = false,
-  });
-  String selector;
-  final List<FieldOp> ops;
-  String? tailJs;
-  bool hasInterpolation;
-}
-
-class FieldOp {
-  FieldOp(this.kind, this.pattern, this.replacement);
-  final String kind; // remove / replace / match
-  final String pattern;
-  final String? replacement;
 }
 
 enum _OpKind { remove, replace, match }

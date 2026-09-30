@@ -1,7 +1,7 @@
 name: legado_md3
 description: Legado with MD3 - 跨平台开源阅读器
 publish_to: 'none'
-version: 3.31.0+3
+version: 3.26.7+1
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -41,7 +41,6 @@ dependencies:
   audioplayers: ^5.2.1
   mobile_scanner: ^3.5.5
   enough_convert: ^1.4.0
-  battery_plus: ^6.0.2
 
 dev_dependencies:
   flutter_test:
@@ -52,9 +51,3 @@ flutter:
   uses-material-design: true
   assets:
     - assets/
-    - assets/web/
-    - assets/web/css/
-    - assets/web/js/
-    - assets/web/fonts/
-    - assets/web/img/
-    - assets/web/img/icons/

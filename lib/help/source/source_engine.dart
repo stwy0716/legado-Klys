@@ -9,10 +9,7 @@ import 'package:legado_md3/data/model/book.dart';
 import 'package:legado_md3/data/model/replace_rule.dart';
 import 'package:legado_md3/help/source/replace_rule_service.dart';
 import 'package:legado_md3/help/source/rule_pipeline.dart';
-import 'package:legado_md3/help/source/js/legado_js_runtime.dart';
-import 'js_mini_eval.dart';
 import 'package:legado_md3/help/http/cookie_manager.dart';
-import 'package:legado_md3/data/local/app_database.dart';
 import 'package:enough_convert/enough_convert.dart';
 
 /// Legado书源引擎 - 对齐原版规则格式（CSS / XPath / JSONPath / 正则 / JS子集）
@@ -36,61 +33,8 @@ class BookSourceEngine {
   String? forcedCharset;
   void setCharset(String? cs) => forcedCharset = cs;
 
-  /// 当前书源是否启用持久化 CookieJar（由各公共入口按书源设置写入）
-  bool _persistCookieJar = false;
-  final DatabaseService _cookieDb = DatabaseService();
-
-  /// 请求节流：书源并发率 concurrentRate（纯数字=最小间隔毫秒；n/ms=每 ms 内 n 次）
-  int _minIntervalMs = 0;
-  DateTime? _lastFetchAt;
-  void _applySourceFlags(BookSource source) {
-    _persistCookieJar = source.enabledCookieJar;
-    var interval = 0;
-    final raw = source.concurrentRate?.trim() ?? '';
-    if (raw.isNotEmpty) {
-      final m = RegExp(r'^\s*(\d+)\s*/\s*(\d+)\s*$').firstMatch(raw);
-      if (m != null) {
-        final n = int.parse(m.group(1)!);
-        final ms = int.parse(m.group(2)!);
-        interval = n <= 0 ? ms : ms ~/ n;
-      } else {
-        interval = int.tryParse(raw) ?? 0;
-      }
-    }
-    _minIntervalMs = interval;
-    // 书源级编码（utf-8/gbk/gb18030…），留空则自动探测
-    final cs = source.charset?.trim() ?? '';
-    forcedCharset = cs.isEmpty ? null : cs;
-  }
-
-  // ==================== 编辑期智能补全专用 ====================
-
-  /// 供书源编辑页“规则补全”抓取页面：应用书源标志、URL 模板、请求头、编码与 Cookie。
-  /// [urlTpl] 可为搜索/发现 URL 模板（含 {{key}}/{{page}}）或任意绝对/相对地址。
-  Future<String> editFetch(BookSource source, String urlTpl,
-      {String keyword = '', int page = 1}) async {
-    _applySourceFlags(source);
-    final url = await _resolveUrlRule(source, urlTpl,
-        key: keyword, page: page, baseUrl: source.bookSourceUrl);
-    return _fetch(url, baseUrl: source.bookSourceUrl);
-  }
-
-  /// 解析相对地址为绝对地址（编辑页推导下一跳用）
-  String resolveEditUrl(String url, String base) => _resolveUrl(url, base);
-
-  /// 取发现配置中的第一条分类 URL 模板
-  String firstExploreUrlOf(String exploreUrl) => _firstExploreUrl(exploreUrl);
-
-  Future<void> _throttle() async {
-    if (_minIntervalMs <= 0) return;
-    final last = _lastFetchAt;
-    if (last != null) {
-      final elapsed = DateTime.now().difference(last).inMilliseconds;
-      final wait = _minIntervalMs - elapsed;
-      if (wait > 0) await Future.delayed(Duration(milliseconds: wait));
-    }
-    _lastFetchAt = DateTime.now();
-  }
+  /// 最近一次请求解码后的原始响应文本（调试页查看用）
+  String? lastRawResponse;
 
   /// 调试日志（环形，最近 120 条）
   final List<String> debugLog = [];
@@ -140,19 +84,12 @@ class BookSourceEngine {
     return {'url': url, 'options': options};
   }
 
-  /// 发送HTTP请求，[baseUrl] 用于解析相对地址
-  Future<String> _fetch(String url, {Map<String, dynamic>? options, String? body, String? baseUrl}) async {
+  /// 发送HTTP请求，[baseUrl] 用于解析相对地址；[source] 提供书源级 header/charset
+  Future<String> _fetch(String url,
+      {Map<String, dynamic>? options, String? body, String? baseUrl, BookSource? source}) async {
     final parsed = _parseUrlWithOptions(url);
     var finalUrl = parsed['url'] as String;
     final opts = parsed['options'] as Map<String, dynamic>;
-
-    // data: URI（书源用 data:;base64,<状态码> 在书址里携带上下文，不发起网络请求）
-    if (finalUrl.startsWith('data:')) {
-      final decoded = _decodeDataUri(finalUrl);
-      _log('data: 书址解码，${decoded.length} 字符');
-      return decoded;
-    }
-
     finalUrl = _resolveUrl(finalUrl, baseUrl ?? '');
 
     final method = (opts['method'] ?? options?['method'] ?? 'GET').toString().toUpperCase();
@@ -166,31 +103,20 @@ class BookSourceEngine {
       } catch (_) {}
     }
     headers ??= {};
+    // 书源级 Header 字段：JSON 对象或每行 "Key: value"（可被 URL 内联 headers 覆盖同名项）
+    if (source?.header != null && source!.header!.trim().isNotEmpty) {
+      headers.addAll(_parseSourceHeader(source.header!));
+    }
     headers.putIfAbsent('User-Agent',
         () => 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36');
     // 自动携带同域已保存的 Cookie（搜索->详情->目录->正文 之间保持会话）
     final cookieManager = CookieManager();
-    var existCookie = cookieManager.cookieHeader(finalUrl);
-    // 开启持久化 CookieJar 时，内存里没有则尝试从数据库恢复同域 Cookie
-    if ((existCookie == null || existCookie.isEmpty) && _persistCookieJar) {
-      try {
-        final host = Uri.parse(finalUrl).host;
-        final saved = await _cookieDb.getCookie(host);
-        if (saved != null && saved.isNotEmpty) {
-          for (final pair in saved.split(';')) {
-            final idx = pair.indexOf('=');
-            if (idx > 0) {
-              cookieManager.saveFromResponse(finalUrl, ['${pair.trimLeft()};']);
-            }
-          }
-          existCookie = cookieManager.cookieHeader(finalUrl);
-        }
-      } catch (_) {}
-    }
+    final existCookie = cookieManager.cookieHeader(finalUrl);
     if (existCookie != null && existCookie.isNotEmpty) {
       headers.putIfAbsent('Cookie', () => existCookie);
     }
-    // 书源级 charset 作为默认
+    // 解码编码：页面强制编码 > 书源级 charset > Content-Type > HTML meta > utf-8 回退
+    final charset = forcedCharset ?? source?.charset;
     final dioOptions = Options(
         method: method,
         headers: headers,
@@ -198,7 +124,6 @@ class BookSourceEngine {
         followRedirects: true,
         validateStatus: (s) => s != null && s < 400);
 
-    await _throttle();
     _log('$method $finalUrl');
     Response<List<int>> response;
     try {
@@ -218,24 +143,39 @@ class BookSourceEngine {
     }
     // 保存服务器下发的 Set-Cookie，供后续同域请求使用
     cookieManager.saveFromResponse(finalUrl, response.headers.map['set-cookie']);
-    // 开启持久化 CookieJar 时，把同域 Cookie 落库（跨启动/登录后保持会话）
-    if (_persistCookieJar) {
-      try {
-        final header = cookieManager.cookieHeader(finalUrl);
-        if (header != null && header.isNotEmpty) {
-          await _cookieDb.saveCookie(Uri.parse(finalUrl).host, header);
-        }
-      } catch (_) {}
-    }
     _log('响应 ${response.statusCode}, ${(response.data ?? []).length} 字节');
-    final text = _decodeBytes(response.data ?? [], response.headers.map);
+    final text = _decodeBytes(response.data ?? [], response.headers.map, fallbackCharset: charset);
     _log('解码完成，文本 ${text.length} 字符');
+    lastRawResponse = text;
     return text;
   }
 
-  /// 按编码解码字节：强制编码 > Content-Type > HTML meta > utf-8（失败回退 GBK）
-  String _decodeBytes(List<int> bytes, Map<String, List<String>> respHeaders) {
-    String? cs = forcedCharset;
+  /// 解析书源 Header 字段：JSON 对象（{"Key":"value"}）或每行 "Key: value"
+  Map<String, dynamic> _parseSourceHeader(String raw) {
+    final map = <String, dynamic>{};
+    final t = raw.trim();
+    if (t.isEmpty) return map;
+    try {
+      final j = jsonDecode(t);
+      if (j is Map) {
+        j.forEach((k, v) => map[k.toString()] = v.toString());
+        return map;
+      }
+    } catch (_) {}
+    for (final line in t.split('\n')) {
+      final i = line.indexOf(':');
+      if (i > 0) {
+        final k = line.substring(0, i).trim();
+        final v = line.substring(i + 1).trim();
+        if (k.isNotEmpty) map[k] = v;
+      }
+    }
+    return map;
+  }
+
+  /// 按编码解码字节：强制编码 > 书源编码 > Content-Type > HTML meta > utf-8（失败回退 GBK）
+  String _decodeBytes(List<int> bytes, Map<String, List<String>> respHeaders, {String? fallbackCharset}) {
+    String? cs = fallbackCharset;
     final ct = (respHeaders['content-type'] ?? respHeaders['Content-Type'] ?? []).join(';').toLowerCase();
     final m = RegExp(r'charset=([a-z0-9\-]+)').firstMatch(ct);
     if (m != null) cs ??= m.group(1);
@@ -282,381 +222,111 @@ class BookSourceEngine {
     }
   }
 
-  /// 解析 data:[;base64],<payload> URI 为文本。
-  /// 兼容书源在 base64 末尾额外挂载的 URL 选项，如
-  /// `data:;base64,<b64>,{"type":"qingtian"}`（base64 字符集不含 `,{`）。
-  String _decodeDataUri(String uri) {
-    final comma = uri.indexOf(',');
-    if (comma < 0) return '';
-    final meta = uri.substring(5, comma);
-    var payload = uri.substring(comma + 1);
-    try {
-      if (meta.contains('base64')) {
-        final optIdx = payload.indexOf(',{');
-        if (optIdx >= 0) payload = payload.substring(0, optIdx);
-        var b64 = payload.trim();
-        final pad = b64.length % 4;
-        if (pad != 0) b64 = b64.padRight(b64.length + (4 - pad), '=');
-        return utf8.decode(base64Decode(b64), allowMalformed: true);
-      }
-      return Uri.decodeComponent(payload);
-    } catch (_) {
-      return '';
-    }
-  }
-
   bool _isJson(String content) {
     final t = content.trim();
     return t.startsWith('{') || t.startsWith('[');
   }
 
-  // ==================== JS 运行时集成 ====================
-
-  static final RegExp _leadingJs = RegExp(r'^\s*<js>([\s\S]*?)</js>');
-  static final RegExp _wholeJs = RegExp(r'^\s*<js>([\s\S]*?)</js>\s*$');
-  static final RegExp _mustache = RegExp(r'\{\{([\s\S]*?)\}\}');
-
-  /// 求值一段书源脚本，返回字符串结果（任何异常都安全降级为 null）。
-  Future<String?> _evalJs(
-    BookSource source,
-    String script, {
-    dynamic result,
-    String? key,
-    int? page,
-    String? baseUrl,
-    Map<String, dynamic>? book,
-    Map<String, dynamic>? chapter,
-    bool isUrlRule = false,
-  }) async {
-    final s = script.trim();
-    if (s.isEmpty) return null;
+  /// 解析书源 variable 字段为全局变量：JSON 对象 或 每行 key=value
+  Map<String, dynamic>? _parseVariable(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    final t = raw.trim();
     try {
-      final rt = await JsRuntimeManager.instance.forSource(source);
-      final out = await rt.eval(JsEvalRequest(
-        source: source,
-        script: s,
-        result: result,
-        key: key,
-        page: page,
-        baseUrl: baseUrl,
-        book: book,
-        chapter: chapter,
-        isUrlRule: isUrlRule,
-      ));
-      for (final l in out.logs) {
-        if (l.trim().isNotEmpty) _log('[JS] $l');
+      final j = jsonDecode(t);
+      if (j is Map) return j.map((k, v) => MapEntry(k.toString(), v.toString()));
+    } catch (_) {}
+    final map = <String, dynamic>{};
+    for (final line in t.split('\n')) {
+      final i = line.indexOf('=');
+      if (i > 0) {
+        final k = line.substring(0, i).trim();
+        final v = line.substring(i + 1).trim();
+        if (k.isNotEmpty) map[k] = v;
       }
-      for (final t in out.toasts) {
-        if (t.trim().isNotEmpty) _log('[JS提示] $t');
-      }
-      if (out.error != null && out.error!.isNotEmpty) {
-        final first = out.error!.split('\n').take(3).join(' ');
-        _log('[JS异常] $first');
-      }
-      return out.stringValue;
-    } catch (e) {
-      _log('[JS运行时不可用] $e');
-      // 降级到迷你求值器
-      return JsMiniEvaluator.eval(s,
-          result: result is String ? result : (result == null ? null : jsonEncode(result)),
-          key: key,
-          page: page,
-          baseUrl: baseUrl);
     }
-  }
-
-  /// 解析 URL 规则：`<js>` 脚本求值（可返回 `url,{options}`），否则走模板替换。
-  Future<String> _resolveUrlRule(
-    BookSource source,
-    String urlTpl, {
-    String? key,
-    int? page,
-    String? baseUrl,
-    Map<String, dynamic>? book,
-  }) async {
-    final t = urlTpl.trim();
-    final m = _leadingJs.firstMatch(t);
-    if (m != null) {
-      final script = m.group(1)!;
-      final tail = t.substring(m.end).trim();
-      var v = await _evalJs(source, script,
-          key: key, page: page, baseUrl: baseUrl, book: book, isUrlRule: true);
-      if (v == null || v.trim().isEmpty) {
-        return _processUrlTemplate(urlTpl, key ?? '', page ?? 1);
-      }
-      v = v.trim();
-      if (tail.isNotEmpty) v = '$v$tail';
-      return _processUrlTemplate(v, key ?? '', page ?? 1);
-    }
-    return _processUrlTemplate(urlTpl, key ?? '', page ?? 1);
-  }
-
-  /// 异步解析 JSON 节点字段（支持 `<js>`、`{{$.x}}`、`$.x`、## 后处理、尾部 @js）。
-  Future<String?> _fieldFromJsonAsync(
-    BookSource source,
-    dynamic item,
-    String rule, {
-    String? baseUrl,
-    String? key,
-    int? page,
-    Map<String, dynamic>? book,
-    Map<String, dynamic>? chapter,
-  }) async {
-    final r = rule.trim();
-    if (r.isEmpty) return null;
-    final parts = _pipeline.parseFieldParts(r);
-    var selector = parts.selector.trim();
-    String? value;
-
-    final lead = _leadingJs.firstMatch(selector);
-    if (lead != null) {
-      final v = await _evalJs(source, lead.group(1)!,
-          result: item, baseUrl: baseUrl, key: key, page: page, book: book, chapter: chapter);
-      final suffix = selector.substring(lead.end).trim();
-      if (v == null) {
-        value = null;
-      } else if (suffix.isNotEmpty) {
-        value = _fieldFromMixed(v, suffix);
-      } else {
-        value = v;
-      }
-    } else if (selector.contains('{{')) {
-      value = await _mustacheAsync(source, selector, item,
-          baseUrl: baseUrl, key: key, page: page, book: book, chapter: chapter);
-    } else if (selector.toLowerCase().startsWith('@js:')) {
-      value = await _evalJs(source, selector.substring(4),
-          result: item, baseUrl: baseUrl, key: key, page: page, book: book, chapter: chapter);
-    } else if (selector.isNotEmpty) {
-      value = _pipeline.fieldFromJson(item, selector);
-    } else {
-      value = item?.toString();
-    }
-
-    if (value == null) return null;
-    value = _pipeline.applyFieldOps(value, parts.ops);
-    if (parts.tailJs != null && value.isNotEmpty) {
-      value = await _evalJs(source, parts.tailJs!,
-          result: value, baseUrl: baseUrl, key: key, page: page, book: book, chapter: chapter) ??
-          value;
-    }
-    return value.isEmpty ? null : value;
-  }
-
-  /// JS 产出的字符串可能是 JSON / HTML，按剩余选择器再取一次。
-  String? _fieldFromMixed(String jsOutput, String suffix) {
-    final s = suffix.trim();
-    if (s.isEmpty) return jsOutput;
-    if (_isJson(jsOutput)) {
-      try {
-        return _pipeline.fieldFromJson(jsonDecode(jsOutput), s);
-      } catch (_) {}
-    }
-    return _pipeline.extractStringFromRaw(jsOutput, s);
-  }
-
-  /// 处理 `{{...}}` mustache（内部为 JS，`$`/result 绑定为当前 JSON 节点）。
-  Future<String> _mustacheAsync(
-    BookSource source,
-    String template,
-    dynamic node, {
-    String? baseUrl,
-    String? key,
-    int? page,
-    Map<String, dynamic>? book,
-    Map<String, dynamic>? chapter,
-  }) async {
-    final sb = StringBuffer();
-    var last = 0;
-    for (final m in _mustache.allMatches(template).toList()) {
-      sb.write(template.substring(last, m.start));
-      final expr = m.group(1)!.trim();
-      final v = await _evalJs(source, expr,
-          result: node, baseUrl: baseUrl, key: key, page: page, book: book, chapter: chapter);
-      sb.write(v ?? '');
-      last = m.end;
-    }
-    sb.write(template.substring(last));
-    return sb.toString();
-  }
-
-  /// 异步解析 HTML 元素字段（含 JS 时用 outerHtml 作为 result）。
-  Future<String?> _fieldFromElementAsync(
-    BookSource source,
-    dom.Element el,
-    String rule, {
-    String? baseUrl,
-    String? key,
-    int? page,
-    Map<String, dynamic>? book,
-    Map<String, dynamic>? chapter,
-  }) async {
-    final r = rule.trim();
-    if (r.isEmpty) return null;
-    if (ruleNeedsRealJs(r)) {
-      final parts = _pipeline.parseFieldParts(r);
-      var selector = parts.selector.trim();
-      String? value;
-      final lead = _leadingJs.firstMatch(selector);
-      if (lead != null) {
-        final v = await _evalJs(source, lead.group(1)!,
-            result: el.outerHtml, baseUrl: baseUrl, key: key, page: page, book: book, chapter: chapter);
-        final suffix = selector.substring(lead.end).trim();
-        value = (v == null) ? null : (suffix.isEmpty ? v : (_fieldFromMixed(v, suffix) ?? v));
-      } else if (selector.contains('{{')) {
-        value = await _mustacheAsync(source, selector, el.outerHtml,
-            baseUrl: baseUrl, key: key, page: page, book: book, chapter: chapter);
-      } else if (selector.toLowerCase().startsWith('@js:')) {
-        value = await _evalJs(source, selector.substring(4),
-            result: el.outerHtml, baseUrl: baseUrl, key: key, page: page, book: book, chapter: chapter);
-      } else {
-        value = _pipeline.fieldFromElement(el, selector);
-      }
-      if (value == null) return null;
-      value = _pipeline.applyFieldOps(value, parts.ops);
-      if (parts.tailJs != null && value.isNotEmpty) {
-        value = await _evalJs(source, parts.tailJs!,
-            result: value, baseUrl: baseUrl, key: key, page: page, book: book, chapter: chapter) ??
-            value;
-      }
-      return value.isEmpty ? null : value;
-    }
-    return _pipeline.fieldFromElement(el, r);
-  }
-
-  Map<String, dynamic> _bookSeed({String? bookUrl, String? name, String? author, int? durChapterIndex}) {
-    return {
-      'bookUrl': bookUrl ?? '',
-      'name': name ?? '',
-      'author': author ?? '',
-      'durChapterIndex': durChapterIndex ?? 0,
-      'durChapterTitle': '',
-      'tocUrl': bookUrl ?? '',
-      'coverUrl': '',
-      'intro': '',
-    };
+    return map.isEmpty ? null : map;
   }
 
   // ==================== 列表提取 ====================
 
-  /// 统一提取书籍列表（自动 HTML / JSON，支持前置 <js>）。
-  Future<List<Map<String, String>>> _extractBookList(
-    BookSource source,
-    String content,
-    Map<String, dynamic> rule,
-    String baseUrl, {
-    String? key,
-    int? page,
-  }) async {
-    var listRule = (rule['bookList'] ?? '').toString();
+  /// 统一提取书籍列表（自动 HTML / JSON）
+  List<Map<String, String>> _extractBookList(String content, Map<String, dynamic> rule, String baseUrl) {
+    final listRule = (rule['bookList'] ?? '').toString();
     if (listRule.isEmpty) return [];
+    _log('列表规则 bookList=$listRule');
     _pipeline
       ..baseUrl = baseUrl
       ..page = null
       ..keyword = null;
 
     final reverse = listRule.trim().startsWith('-');
-    if (reverse) listRule = listRule.trim().substring(1).trim();
-
-    // 前置 <js>：脚本产出新内容（JSON 字符串/对象/HTML），剩余选择器继续取列表。
-    final lead = _leadingJs.firstMatch(listRule.trim());
-    if (lead != null) {
-      final v = await _evalJs(source, lead.group(1)!,
-          result: content, key: key, page: page, baseUrl: baseUrl);
-      final suffix = listRule.trim().substring(lead.end).trim();
-      if (v != null && v.isNotEmpty) {
-        content = v;
-        listRule = suffix.isEmpty ? '' : suffix;
-      }
-    }
-
-    final result = <Map<String, String>>[];
     final isJson = _isJson(content);
+    final result = <Map<String, String>>[];
 
     if (isJson) {
       dynamic json;
       try {
         json = jsonDecode(content);
       } catch (_) {
+        _log('列表：JSON 解析失败');
         return [];
       }
-      // <js> 直接返回数组且无后续选择器
-      List<dynamic> nodes;
-      if (listRule.isEmpty) {
-        nodes = json is List ? json : (json is Map && json['data'] is List ? json['data'] as List : const []);
-      } else {
-        nodes = _pipeline.selectJsonNodes(json, listRule);
-      }
+      final nodes = _pipeline.selectJsonNodes(json, listRule);
+      _log('列表：JSON 命中 ${nodes.length} 项');
       for (final item in nodes) {
         if (item is! Map) continue;
-        final b = await _bookFromJsonItem(source, item, rule, baseUrl, key: key, page: page);
+        final b = _bookFromJsonItem(item, rule, baseUrl);
         if (b['name']!.isNotEmpty) result.add(b);
       }
     } else {
-      if (listRule.isEmpty) return [];
       final doc = html_parser.parse(content);
-      var elements = _pipeline.selectElements(doc, listRule);
-      if (reverse) elements = elements.reversed.toList();
+      final elements = _pipeline.selectElements(doc, listRule);
+      _log('列表：HTML 命中 ${elements.length} 个元素');
       for (final el in elements) {
-        final b = await _bookFromElement(source, el, rule, baseUrl, key: key, page: page);
+        final b = _bookFromElement(el, rule, baseUrl);
         if (b['name']!.isNotEmpty) result.add(b);
       }
-      if (reverse) return result;
-      return result;
     }
-
+    _log('列表：成功提取 ${result.length} 本书');
     if (reverse) return result.reversed.toList();
     return result;
   }
 
-  Future<Map<String, String>> _bookFromElement(
-    BookSource source,
-    dom.Element el,
-    Map<String, dynamic> rule,
-    String baseUrl, {
-    String? key,
-    int? page,
-  }) async {
-    Future<String?> f(String fieldKey) async {
-      final r = rule[fieldKey]?.toString() ?? '';
+  Map<String, String> _bookFromElement(dom.Element el, Map<String, dynamic> rule, String baseUrl) {
+    String? f(String key) {
+      final r = rule[key]?.toString() ?? '';
       if (r.isEmpty) return null;
-      return _fieldFromElementAsync(source, el, r, baseUrl: baseUrl, key: key, page: page);
+      return _pipeline.fieldFromElement(el, r);
     }
 
     return {
-      'name': (await f('name') ?? '').trim(),
-      'author': (await f('author') ?? '').trim(),
-      'coverUrl': _resolveUrl(await f('coverUrl') ?? '', baseUrl),
-      'bookUrl': _resolveUrl(await f('bookUrl') ?? '', baseUrl),
-      'intro': (await f('intro') ?? '').trim(),
-      'kind': (await f('kind') ?? '').trim(),
-      'lastChapter': (await f('lastChapter') ?? '').trim(),
-      'wordCount': (await f('wordCount') ?? '').trim(),
+      'name': (f('name') ?? '').trim(),
+      'author': (f('author') ?? '').trim(),
+      'coverUrl': _resolveUrl(f('coverUrl') ?? '', baseUrl),
+      'bookUrl': _resolveUrl(f('bookUrl') ?? '', baseUrl),
+      'intro': (f('intro') ?? '').trim(),
+      'kind': (f('kind') ?? '').trim(),
+      'lastChapter': (f('lastChapter') ?? '').trim(),
+      'wordCount': (f('wordCount') ?? '').trim(),
     };
   }
 
-  Future<Map<String, String>> _bookFromJsonItem(
-    BookSource source,
-    dynamic item,
-    Map<String, dynamic> rule,
-    String baseUrl, {
-    String? key,
-    int? page,
-  }) async {
-    Future<String?> f(String fieldKey) async {
-      final r = rule[fieldKey]?.toString() ?? '';
+  Map<String, String> _bookFromJsonItem(dynamic item, Map<String, dynamic> rule, String baseUrl) {
+    String? f(String key) {
+      final r = rule[key]?.toString() ?? '';
       if (r.isEmpty) return null;
-      return _fieldFromJsonAsync(source, item, r, baseUrl: baseUrl, key: key, page: page);
+      return _pipeline.fieldFromJson(item, r);
     }
 
     return {
-      'name': (await f('name') ?? '').trim(),
-      'author': (await f('author') ?? '').trim(),
-      'coverUrl': _resolveUrl(await f('coverUrl') ?? '', baseUrl),
-      'bookUrl': _resolveUrl(await f('bookUrl') ?? '', baseUrl),
-      'intro': (await f('intro') ?? '').trim(),
-      'kind': (await f('kind') ?? '').trim(),
-      'lastChapter': (await f('lastChapter') ?? '').trim(),
-      'wordCount': (await f('wordCount') ?? '').trim(),
+      'name': (f('name') ?? '').trim(),
+      'author': (f('author') ?? '').trim(),
+      'coverUrl': _resolveUrl(f('coverUrl') ?? '', baseUrl),
+      'bookUrl': _resolveUrl(f('bookUrl') ?? '', baseUrl),
+      'intro': (f('intro') ?? '').trim(),
+      'kind': (f('kind') ?? '').trim(),
+      'lastChapter': (f('lastChapter') ?? '').trim(),
+      'wordCount': (f('wordCount') ?? '').trim(),
     };
   }
 
@@ -678,17 +348,15 @@ class BookSourceEngine {
 
   /// 搜索书籍
   Future<List<SearchBook>> search(BookSource source, String keyword, {int page = 1}) async {
-    _applySourceFlags(source);
     if (source.searchUrl == null || source.searchUrl!.isEmpty) return [];
     if (source.ruleSearch == null) return [];
     try {
-      final url = await _resolveUrlRule(source, source.searchUrl!,
-          key: keyword, page: page, baseUrl: source.bookSourceUrl);
-      _log('搜索关键字: $keyword');
-      final content = await _fetch(url, baseUrl: source.bookSourceUrl);
-      final books = await _extractBookList(source, content, source.ruleSearch!,
-          source.bookSourceUrl, key: keyword, page: page);
-      _log('搜索到 ${books.length} 本');
+      final url = _processUrlTemplate(source.searchUrl!, keyword, page);
+      _log('搜索URL: $url');
+      _pipeline.sourceVars = _parseVariable(source.variable);
+      final content = await _fetch(url, baseUrl: source.bookSourceUrl, source: source);
+      final books = _extractBookList(content, source.ruleSearch!, source.bookSourceUrl);
+      _log('搜索完成，共 ${books.length} 个结果');
       return _toSearchBooks(books, source);
     } catch (e) {
       _log('搜索异常: $e');
@@ -698,7 +366,6 @@ class BookSourceEngine {
 
   /// 发现书籍（使用第一个发现分类）
   Future<List<SearchBook>> explore(BookSource source, {int page = 1}) async {
-    _applySourceFlags(source);
     if (source.exploreUrl == null || source.exploreUrl!.isEmpty) return [];
     final firstUrl = _firstExploreUrl(source.exploreUrl!);
     return exploreByUrl(source, firstUrl, page: page);
@@ -706,14 +373,14 @@ class BookSourceEngine {
 
   /// 按指定发现分类 URL 探索
   Future<List<SearchBook>> exploreByUrl(BookSource source, String exploreUrl, {int page = 1}) async {
-    _applySourceFlags(source);
     if (source.ruleExplore == null || exploreUrl.isEmpty) return [];
     try {
-      final url = await _resolveUrlRule(source, exploreUrl,
-          key: '', page: page, baseUrl: source.bookSourceUrl);
-      final content = await _fetch(url, baseUrl: source.bookSourceUrl);
-      final books = await _extractBookList(source, content, source.ruleExplore!,
-          source.bookSourceUrl, page: page);
+      final url = _processUrlTemplate(exploreUrl, '', page);
+      _log('发现URL: $url');
+      _pipeline.sourceVars = _parseVariable(source.variable);
+      final content = await _fetch(url, baseUrl: source.bookSourceUrl, source: source);
+      final books = _extractBookList(content, source.ruleExplore!, source.bookSourceUrl);
+      _log('发现完成，共 ${books.length} 个结果');
       return _toSearchBooks(books, source);
     } catch (e) {
       _log('发现异常: $e');
@@ -739,56 +406,41 @@ class BookSourceEngine {
   }
 
   /// 获取书籍详情
-  Future<Book?> getBookInfo(BookSource source, String bookUrl,
-      {String? presetName, String? presetAuthor}) async {
-    _applySourceFlags(source);
+  Future<Book?> getBookInfo(BookSource source, String bookUrl) async {
     try {
       final rule = source.ruleBookInfo ?? {};
-      var content = await _fetch(bookUrl, baseUrl: source.bookSourceUrl);
+      _log('详情URL: $bookUrl');
+      _pipeline.sourceVars = _parseVariable(source.variable);
+      final content = await _fetch(bookUrl, baseUrl: source.bookSourceUrl, source: source);
       _pipeline.baseUrl = source.bookSourceUrl;
-      final seed = _bookSeed(
-          bookUrl: bookUrl, name: presetName, author: presetAuthor);
-
-      // ruleBookInfo.init：可发起二次请求并替换正文
-      final initRule = rule['init']?.toString() ?? '';
-      if (initRule.trim().isNotEmpty) {
-        final init = await _evalRuleContent(source, content, initRule,
-            baseUrl: bookUrl, book: seed);
-        if (init != null && init.isNotEmpty) content = init;
-      }
 
       final isJson = _isJson(content);
-      final jsonNode = isJson ? jsonDecode(content) : null;
+      String name, author, coverUrl, intro, kind, lastChapter;
+      var tocUrl = bookUrl;
 
-      Future<String?> field(String key) async {
+      String? field(String key) {
         final r = rule[key]?.toString() ?? '';
         if (r.isEmpty) return null;
-        if (ruleNeedsRealJs(r)) {
-          return _fieldFromJsonAsync(source, jsonNode ?? content, r,
-              baseUrl: bookUrl, book: seed);
-        }
-        return isJson
-            ? _pipeline.fieldFromJson(jsonNode, r)
+        final v = isJson
+            ? _pipeline.fieldFromJson(jsonDecode(content), r)
             : _pipeline.extractStringFromRaw(content, r);
+        _log('详情字段 $key = ${(v ?? '').length > 60 ? '${v!.substring(0, 60)}...' : v}');
+        return v;
       }
 
-      final name = ((await field('name')) ?? presetName ?? '').trim();
-      final author = ((await field('author')) ?? presetAuthor ?? '').trim();
-      var coverUrl = _resolveUrl(await field('coverUrl') ?? '', source.bookSourceUrl);
-      final intro = await field('intro') ?? '';
-      final kind = await field('kind') ?? '';
-      final lastChapter = await field('lastChapter') ?? '';
-      var tocUrl = bookUrl;
-      final toc = await field('tocUrl');
-      if (toc != null && toc.isNotEmpty) tocUrl = _resolveUrl(toc, bookUrl);
+      name = (field('name') ?? '').trim();
+      author = (field('author') ?? '').trim();
+      coverUrl = _resolveUrl(field('coverUrl') ?? '', source.bookSourceUrl);
+      intro = field('intro') ?? '';
+      kind = field('kind') ?? '';
+      lastChapter = field('lastChapter') ?? '';
+      final toc = field('tocUrl');
+      if (toc != null && toc.isNotEmpty) tocUrl = _resolveUrl(toc, source.bookSourceUrl);
 
       if (name.isEmpty) {
-        _log('详情：未解析到书名');
+        _log('详情：未解析到书名（请检查 name 规则或响应是否为登录/验证码页）');
         return null;
       }
-      seed['name'] = name;
-      seed['author'] = author;
-      seed['tocUrl'] = tocUrl;
       return Book(
         name: name,
         author: author,
@@ -807,110 +459,55 @@ class BookSourceEngine {
     }
   }
 
-  /// 处理一段「以内容为 result」的规则：支持前置 <js>（输出替换内容）或纯选择器。
-  Future<String?> _evalRuleContent(
-    BookSource source,
-    String content,
-    String rule, {
-    String? baseUrl,
-    Map<String, dynamic>? book,
-    Map<String, dynamic>? chapter,
-  }) async {
-    final r = rule.trim();
-    if (r.isEmpty) return null;
-    final lead = _leadingJs.firstMatch(r);
-    if (lead != null) {
-      final v = await _evalJs(source, lead.group(1)!,
-          result: content, baseUrl: baseUrl, book: book, chapter: chapter);
-      final suffix = r.substring(lead.end).trim();
-      if (v == null) return null;
-      if (suffix.isEmpty) return v;
-      return _fieldFromMixed(v, suffix) ?? v;
-    }
-    final whole = _wholeJs.firstMatch(r);
-    if (whole != null) {
-      return _evalJs(source, whole.group(1)!,
-          result: content, baseUrl: baseUrl, book: book, chapter: chapter);
-    }
-    return _pipeline.extractStringFromRaw(content, r);
-  }
-
-  /// 获取章节目录（支持 nextTocUrl 翻页拼接、前置 <js>）
-  Future<List<BookChapter>> getToc(BookSource source, String tocUrl,
-      {Map<String, dynamic>? bookInfo}) async {
-    _applySourceFlags(source);
+  /// 获取章节目录（支持 nextTocUrl 翻页拼接）
+  Future<List<BookChapter>> getToc(BookSource source, String tocUrl) async {
     if (source.ruleToc == null) return [];
     final chapters = <BookChapter>[];
     var currentUrl = tocUrl;
     final visited = <String>{};
-    final seed = bookInfo ?? _bookSeed(bookUrl: tocUrl);
     try {
       for (var page = 0; page < 20; page++) {
         if (visited.contains(currentUrl)) break;
         visited.add(currentUrl);
 
-        var content = await _fetch(currentUrl, baseUrl: source.bookSourceUrl);
+        final content = await _fetch(currentUrl, baseUrl: source.bookSourceUrl, source: source);
         final rule = source.ruleToc!;
-        var listRule = (rule['chapterList'] ?? '').toString();
+        final listRule = (rule['chapterList'] ?? '').toString();
         if (listRule.isEmpty) break;
-        final reverse = listRule.trim().startsWith('-');
-        if (reverse) listRule = listRule.trim().substring(1).trim();
+        _pipeline.sourceVars = _parseVariable(source.variable);
         _pipeline.baseUrl = currentUrl;
-
-        // 前置 <js>（如 hex 解码、二次 ajax 后返回 JSON/HTML）
-        final lead = _leadingJs.firstMatch(listRule.trim());
-        String jsSuffix = '';
-        if (lead != null) {
-          final v = await _evalJs(source, lead.group(1)!,
-              result: content, baseUrl: currentUrl, book: seed);
-          jsSuffix = listRule.trim().substring(lead.end).trim();
-          if (v != null && v.isNotEmpty) content = v;
-          listRule = jsSuffix;
-        }
+        _log('目录第 ${page + 1} 页 URL: $currentUrl');
+        _log('目录列表规则 chapterList=$listRule');
 
         final isJson = _isJson(content);
         final pageChapters = <Map<String, String>>[];
         if (isJson) {
           final json = jsonDecode(content);
-          final nodes = listRule.isEmpty
-              ? (json is List ? json : const [])
-              : _pipeline.selectJsonNodes(json, listRule);
+          final nodes = _pipeline.selectJsonNodes(json, listRule);
           for (final item in nodes) {
             if (item is! Map) continue;
-            final title = (await _fieldFromJsonAsync(
-                    source, item, rule['chapterName']?.toString() ?? '',
-                    baseUrl: currentUrl, book: seed) ??
-                '').trim();
-            var url = await _fieldFromJsonAsync(
-                source, item, rule['chapterUrl']?.toString() ?? '',
-                baseUrl: currentUrl, book: seed);
-            final isVolume = await _fieldFromJsonAsync(
-                    source, item, rule['isVolume']?.toString() ?? '',
-                    baseUrl: currentUrl, book: seed) ??
-                '';
             pageChapters.add({
-              'title': title,
-              'url': _resolveUrl(url ?? '', currentUrl),
-              'isVolume': isVolume,
+              'title': (_pipeline.fieldFromJson(item, rule['chapterName']?.toString() ?? '') ?? '').trim(),
+              'url': _resolveUrl(
+                  _pipeline.fieldFromJson(item, rule['chapterUrl']?.toString() ?? '') ?? '', currentUrl),
+              'isVolume': _pipeline.fieldFromJson(item, rule['isVolume']?.toString() ?? '') ?? '',
             });
           }
         } else {
-          if (listRule.isEmpty) break;
           final doc = html_parser.parse(content);
+          final reverse = listRule.trim().startsWith('-');
           var elements = _pipeline.selectElements(doc, listRule);
           if (reverse) elements = elements.reversed.toList();
           for (final el in elements) {
-            Future<String?> f(String key) async {
+            String? f(String key) {
               final r = rule[key]?.toString() ?? '';
-              if (r.isEmpty) return null;
-              return _fieldFromElementAsync(source, el, r,
-                  baseUrl: currentUrl, book: seed);
+              return r.isEmpty ? null : _pipeline.fieldFromElement(el, r);
             }
-            final title = (await f('chapterName') ?? el.text.trim()).trim();
-            final url = _resolveUrl(
-                await f('chapterUrl') ?? el.attributes['href'] ?? '', currentUrl);
-            final isVolume = await f('isVolume') ?? '';
-            pageChapters.add({'title': title, 'url': url, 'isVolume': isVolume});
+            pageChapters.add({
+              'title': (f('chapterName') ?? el.text.trim()).trim(),
+              'url': _resolveUrl(f('chapterUrl') ?? el.attributes['href'] ?? '', currentUrl),
+              'isVolume': f('isVolume') ?? '',
+            });
           }
         }
 
@@ -919,23 +516,18 @@ class BookSourceEngine {
             index: chapters.length,
             title: c['title'] ?? '',
             url: c['url'] ?? '',
-            isVolume: (c['isVolume'] ?? '') == '1' ||
-                (c['isVolume'] ?? '').toLowerCase() == 'true',
+            isVolume: (c['isVolume'] ?? '') == '1' || (c['isVolume'] ?? '').toLowerCase() == 'true',
           ));
         }
+        _log('目录第 ${page + 1} 页提取 ${pageChapters.length} 章，累计 ${chapters.length} 章');
 
         // 目录下一页
         final nextRule = rule['nextTocUrl']?.toString() ?? '';
         if (nextRule.isEmpty) break;
-        String? next;
-        if (ruleNeedsRealJs(nextRule)) {
-          next = await _evalRuleContent(source, content, nextRule,
-              baseUrl: currentUrl, book: seed);
-        } else {
-          next = isJson
-              ? _pipeline.fieldFromJson(jsonDecode(content), nextRule)
-              : _pipeline.extractStringFromRaw(content, nextRule);
-        }
+        final next = isJson
+            ? _pipeline.fieldFromJson(jsonDecode(content), nextRule)
+            : _pipeline.extractStringFromRaw(content, nextRule);
+        _log('目录下一页规则 nextTocUrl=$nextRule => $next');
         if (next == null || next.isEmpty || next == currentUrl) break;
         currentUrl = _resolveUrl(next, currentUrl);
       }
@@ -949,24 +541,22 @@ class BookSourceEngine {
 
   /// 获取正文内容
   Future<String?> getContent(BookSource source, String contentUrl,
-      {List<ReplaceRule>? replaceRules,
-      Map<String, dynamic>? bookInfo,
-      Map<String, dynamic>? chapter}) async {
-    _applySourceFlags(source);
+      {List<ReplaceRule>? replaceRules}) async {
     if (source.ruleContent == null) return null;
     try {
       final rule = source.ruleContent!;
-      final raw = await _fetch(contentUrl, baseUrl: source.bookSourceUrl);
+      final content = await _fetch(contentUrl, baseUrl: source.bookSourceUrl, source: source);
+      _pipeline.sourceVars = _parseVariable(source.variable);
       _pipeline.baseUrl = contentUrl;
       final contentRule = (rule['content'] ?? '').toString();
       if (contentRule.isEmpty) return null;
+      _log('正文URL: $contentUrl');
+      _log('正文规则 content=$contentRule');
 
-      final seed = bookInfo ?? _bookSeed(bookUrl: chapter?['bookUrl']?.toString());
-      if (chapter != null) seed['durChapterIndex'] = chapter['index'] ?? 0;
-      final ch = chapter ?? {'index': 0, 'title': '', 'url': contentUrl};
-
-      var result = await _evalRuleContent(source, raw, contentRule,
-          baseUrl: contentUrl, book: seed, chapter: ch);
+      final isJson = _isJson(content);
+      var result = isJson
+          ? _pipeline.fieldFromJson(jsonDecode(content), contentRule)
+          : _pipeline.extractStringFromRaw(content, contentRule, forceJson: false);
       if (result == null || result.isEmpty) {
         _log('正文：规则未匹配到内容');
         return null;
@@ -975,14 +565,13 @@ class BookSourceEngine {
       // 正文分页：递归抓取 nextContentUrl 拼接（最多 10 页）
       final nextRule = rule['nextContentUrl']?.toString() ?? '';
       if (nextRule.isNotEmpty) {
-        result = await _appendNextPages(source, raw, result, nextRule, contentUrl, 1,
-            book: seed, chapter: ch);
+        _log('正文分页规则 nextContentUrl=$nextRule');
+        result = await _appendNextPages(source, content, result, nextRule, contentUrl, 1);
       }
+      _log('正文提取完成：${result.length} 字符');
 
       // 图片正文：规则为 imageContent 时保留 <img>
-      final keepImage = rule['imageContent']?.toString() == '1' ||
-          rule['imageContent']?.toString() == 'true' ||
-          rule['imageStyle']?.toString() == 'full';
+      final keepImage = rule['imageContent']?.toString() == '1' || rule['imageContent']?.toString() == 'true';
 
       // 应用替换净化
       if (replaceRules != null && replaceRules.isNotEmpty) {
@@ -999,25 +588,27 @@ class BookSourceEngine {
 
   /// 递归拼接分页正文
   Future<String> _appendNextPages(
-      BookSource source, String pageContent, String acc, String nextRule, String currentUrl, int depth,
-      {Map<String, dynamic>? book, Map<String, dynamic>? chapter}) async {
+      BookSource source, String pageContent, String acc, String nextRule, String currentUrl, int depth) async {
     if (depth >= 10) return acc;
     try {
-      var nextUrl = await _evalRuleContent(source, pageContent, nextRule,
-          baseUrl: currentUrl, book: book, chapter: chapter);
+      final isJson = _isJson(pageContent);
+      var nextUrl = isJson
+          ? _pipeline.fieldFromJson(jsonDecode(pageContent), nextRule)
+          : _pipeline.extractStringFromRaw(pageContent, nextRule);
       if (nextUrl == null || nextUrl.isEmpty || nextUrl == currentUrl) return acc;
       nextUrl = _resolveUrl(nextUrl, currentUrl);
 
-      final nextContent = await _fetch(nextUrl, baseUrl: source.bookSourceUrl);
+      final nextContent = await _fetch(nextUrl, baseUrl: source.bookSourceUrl, source: source);
       final contentRule = source.ruleContent!['content']?.toString() ?? '';
-      final part = await _evalRuleContent(source, nextContent, contentRule,
-          baseUrl: nextUrl, book: book, chapter: chapter);
+      final nextIsJson = _isJson(nextContent);
+      final part = nextIsJson
+          ? _pipeline.fieldFromJson(jsonDecode(nextContent), contentRule)
+          : _pipeline.extractStringFromRaw(nextContent, contentRule);
       if (part == null || part.isEmpty) return acc;
       acc = '$acc\n${_cleanHtml(part)}';
       final nnRule = source.ruleContent!['nextContentUrl']?.toString() ?? '';
       if (nnRule.isNotEmpty) {
-        return await _appendNextPages(source, nextContent, acc, nnRule, nextUrl, depth + 1,
-            book: book, chapter: chapter);
+        return _appendNextPages(source, nextContent, acc, nnRule, nextUrl, depth + 1);
       }
       return acc;
     } catch (_) {

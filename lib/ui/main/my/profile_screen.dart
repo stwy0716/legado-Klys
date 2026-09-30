@@ -24,7 +24,6 @@ import 'package:legado_md3/ui/config/lab_config_screen.dart';
 import 'package:legado_md3/ui/main/subscribe/subscribe_screen.dart';
 import 'package:legado_md3/help/storage/crash_log_helper.dart';
 import 'package:legado_md3/help/config/app_config.dart';
-import 'package:legado_md3/ui/ai/ai_chat_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -79,7 +78,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           _buildSectionHeader('其他'),
           if (AppConfig.enableAiChat)
-            _buildMenuItem(context, Icons.smart_toy_outlined, 'AI聊天', 'AI助手对话', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AiChatScreen()))),
+            _buildMenuItem(context, Icons.smart_toy_outlined, 'AI聊天', 'AI助手对话', () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('AI聊天功能开发中')))),
           _buildMenuItem(context, Icons.rss_feed_outlined, 'RSS订阅', '订阅源管理', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscribeScreen()))),
           _buildMenuItem(context, Icons.cloud_outlined, '云盘同步', 'WebDAV云同步', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BackupScreen()))),
           _buildMenuItem(context, Icons.subscriptions_outlined, '规则订阅', '订阅书源规则', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RuleSubscriptionScreen()))),
@@ -114,7 +113,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
 
           const SizedBox(height: 24),
-          const Center(child: Text('Legado MD3 v3.29.0', style: TextStyle(color: Colors.grey, fontSize: 12))),
+          const Center(child: Text('Legado MD3 v3.26.7', style: TextStyle(color: Colors.grey, fontSize: 12))),
           const SizedBox(height: 16),
         ],
       ),
@@ -131,7 +130,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final body = (resp.data['body'] ?? '').toString();
       final htmlUrl = (resp.data['html_url'] ?? 'https://github.com/stwy0716/legado-K/releases').toString();
       final latest = tag.replaceAll(RegExp(r'[^0-9.]'), '').split('.').map((e) => int.tryParse(e) ?? 0).toList();
-      final cur = [3, 29, 0];
+      final cur = [3, 26, 7];
       bool hasNew = false;
       for (var i = 0; i < 3; i++) {
         final l = i < latest.length ? latest[i] : 0;
@@ -162,7 +161,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('Legado MD3', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
-        const Text('版本: 3.29.0'),
+        const Text('版本: 3.26.7'),
         const SizedBox(height: 4),
         const Text('基于Legado MD3风格的跨平台阅读应用，支持Android和iOS'),
         const Divider(height: 24),

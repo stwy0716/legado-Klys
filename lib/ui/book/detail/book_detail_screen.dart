@@ -58,8 +58,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
       var noteUrl = widget.book.noteUrl;
       // 没有目录地址时先用书籍详情规则补全
       if ((noteUrl == null || noteUrl.isEmpty) && (widget.book.bookUrl ?? '').isNotEmpty) {
-        final info = await engine.getBookInfo(source, widget.book.bookUrl!,
-            presetName: widget.book.name, presetAuthor: widget.book.author);
+        final info = await engine.getBookInfo(source, widget.book.bookUrl!);
         if (info != null) {
           noteUrl = info.noteUrl ?? noteUrl;
           widget.book.noteUrl = noteUrl;
@@ -68,8 +67,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         }
       }
       if (noteUrl != null && noteUrl.isNotEmpty) {
-        final chapters = await engine.getToc(source, noteUrl,
-            bookInfo: widget.book.jsContext());
+        final chapters = await engine.getToc(source, noteUrl);
         if (chapters.isNotEmpty) {
           await _db.saveChapters(widget.book.name, widget.book.author, chapters);
           _chapters = chapters;
@@ -134,38 +132,16 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     try {
       final sources = await _db.getAllSources(enabled: true);
       final source = sources.where((s) => s.bookSourceUrl == widget.book.origin).firstOrNull;
-      if (source == null) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('未找到对应书源，无法更新')));
-        return;
+      if (source != null && widget.book.noteUrl != null) {
+        final engine = BookSourceEngine();
+        final chapters = await engine.getToc(source, widget.book.noteUrl!);
+        await _db.saveChapters(widget.book.name, widget.book.author, chapters);
+        widget.book.lastChapter = chapters.last.title;
+        widget.book.lastChapterIndex = chapters.length - 1;
+        await _db.updateBook(widget.book);
+        await _loadChapters();
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('更新完成，共${chapters.length}章')));
       }
-      final engine = BookSourceEngine();
-      var noteUrl = widget.book.noteUrl;
-      // 目录地址缺失时先通过书籍详情规则补全
-      if ((noteUrl == null || noteUrl.isEmpty) && (widget.book.bookUrl ?? '').isNotEmpty) {
-        final info = await engine.getBookInfo(source, widget.book.bookUrl!,
-            presetName: widget.book.name, presetAuthor: widget.book.author);
-        if (info != null) {
-          noteUrl = info.noteUrl ?? noteUrl;
-          widget.book.noteUrl = noteUrl;
-          if ((info.intro ?? '').isNotEmpty) widget.book.intro = info.intro;
-        }
-      }
-      if (noteUrl == null || noteUrl.isEmpty) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('无法获取目录地址，请尝试换源')));
-        return;
-      }
-      final chapters = await engine.getToc(source, noteUrl,
-          bookInfo: widget.book.jsContext());
-      if (chapters.isEmpty) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('更新失败：未获取到章节')));
-        return;
-      }
-      await _db.saveChapters(widget.book.name, widget.book.author, chapters);
-      widget.book.lastChapter = chapters.last.title;
-      widget.book.lastChapterIndex = chapters.length - 1;
-      await _db.updateBook(widget.book);
-      await _loadChapters();
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('更新完成，共${chapters.length}章')));
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('更新失败: $e')));
     }
@@ -189,9 +165,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
       final ch = _chapters[i];
       if (ch.isVolume) continue;
       try {
-        final content = await engine.getContent(source, ch.url,
-            bookInfo: widget.book.jsContext(),
-            chapter: ch.jsContext(widget.book.bookUrl));
+        final content = await engine.getContent(source, ch.url);
         if (content != null && content.isNotEmpty) {
           await _db.updateChapterContent(widget.book.name, widget.book.author, ch.index, content);
           ok++;
@@ -281,8 +255,8 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
               onTap: () async {
                 Navigator.pop(context);
                 final chapters = await DatabaseService().getChapters(widget.book.name, widget.book.author);
-                for (final ch in chapters) {
-                  await DatabaseService().updateChapterContent(widget.book.name, widget.book.author, ch.index, '');
+                for (var i = 0; i < chapters.length; i++) {
+                  await DatabaseService().updateChapterContent(widget.book.name, widget.book.author, i, '');
                 }
                 if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('缓存已清除')));
               },
@@ -514,11 +488,10 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   Widget _buildCover(Book book, {bool large = false}) {
     final width = large ? 120.0 : 80.0;
     final height = large ? 160.0 : 110.0;
-    final cover = (book.customCoverUrl != null && book.customCoverUrl!.isNotEmpty) ? book.customCoverUrl : book.coverUrl;
-    if (cover != null && cover.isNotEmpty) {
+    if (book.coverUrl != null && book.coverUrl!.isNotEmpty) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(8),
-        child: Image.network(cover, width: width, height: height, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _buildDefaultCover(book, width, height)),
+        child: Image.network(book.coverUrl!, width: width, height: height, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _buildDefaultCover(book, width, height)),
       );
     }
     return _buildDefaultCover(book, width, height);

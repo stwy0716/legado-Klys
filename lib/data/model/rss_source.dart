@@ -1,7 +1,5 @@
-import 'package:legado_md3/help/source/js/js_source.dart';
-
 /// RSS订阅源模型 - 对齐原版RssSource
-class RssSource implements JsSource {
+class RssSource {
   int? id;
   String sourceName;
   String sourceUrl;
@@ -43,28 +41,6 @@ class RssSource implements JsSource {
   int? customOrder;
   int? lastUpdateTime;
   int? unreadCount;
-
-  // 运行时 / 兼容字段
-  @override
-  String? variable;
-  @override
-  bool enabledCookieJar;
-  int? articleStyle; // JSON articleStyle（0 默认 / 1 图片 / 2 视频等）
-  bool enableJs;
-  bool loadWithBaseUrl;
-  bool preload;
-  bool singleUrl;
-  bool cacheFirst;
-  String? redirectPolicy;
-  int sourceType;
-
-  // ---- JsSource 适配 ----
-  @override
-  String get jsUrl => sourceUrl;
-  @override
-  String get jsName => sourceName;
-  @override
-  String get jsHttpUrl => sourceUrl.startsWith('http') ? sourceUrl : '';
 
   // 兼容别名
   String get name => sourceName;
@@ -114,16 +90,6 @@ class RssSource implements JsSource {
     this.customOrder,
     this.lastUpdateTime,
     this.unreadCount = 0,
-    this.variable,
-    this.enabledCookieJar = false,
-    this.articleStyle,
-    this.enableJs = false,
-    this.loadWithBaseUrl = false,
-    this.preload = false,
-    this.singleUrl = false,
-    this.cacheFirst = false,
-    this.redirectPolicy,
-    this.sourceType = 0,
   })  : sourceName = sourceName,
         sourceUrl = sourceUrl;
 
@@ -165,8 +131,6 @@ class RssSource implements JsSource {
     'customOrder': customOrder,
     'lastUpdateTime': lastUpdateTime,
     'unreadCount': unreadCount,
-    'variable': variable,
-    'enabledCookieJar': enabledCookieJar ? 1 : 0,
   };
 
   factory RssSource.fromMap(Map<String, dynamic> map) => RssSource(
@@ -207,11 +171,6 @@ class RssSource implements JsSource {
     customOrder: map['customOrder'] as int?,
     lastUpdateTime: map['lastUpdateTime'] as int?,
     unreadCount: map['unreadCount'] as int? ?? 0,
-    variable: map['variable'] as String?,
-    enabledCookieJar: (map['enabledCookieJar'] as int?) == 1,
-    articleStyle: map['articleStyle'] is int
-        ? map['articleStyle'] as int
-        : int.tryParse(map['articleStyle']?.toString() ?? ''),
   );
 
   /// 原版JSON格式兼容
@@ -231,7 +190,7 @@ class RssSource implements JsSource {
     'variableComment': variableComment,
     'concurrentRate': concurrentRate,
     'jsLib': jsLib,
-    'articleStyle': articleStyle ?? int.tryParse(startStyle ?? ''),
+    'articleStyle': startStyle,
     'ruleArticles': ruleArticles,
     'ruleNextPage': ruleNextPage,
     'ruleTitle': ruleTitle,
@@ -246,16 +205,6 @@ class RssSource implements JsSource {
     'contentBlacklist': contentBlacklist,
     'shouldOverrideUrlLoading': shouldOverrideUrlLoading,
     'enabled': enabled,
-    'enabledCookieJar': enabledCookieJar,
-    'enableJs': enableJs,
-    'loadWithBaseUrl': loadWithBaseUrl,
-    'preload': preload,
-    'singleUrl': singleUrl,
-    'cacheFirst': cacheFirst,
-    'redirectPolicy': redirectPolicy,
-    'customOrder': customOrder,
-    'lastUpdateTime': lastUpdateTime,
-    'type': sourceType,
   };
 
   factory RssSource.fromJson(Map<String, dynamic> json) => RssSource(
@@ -274,10 +223,7 @@ class RssSource implements JsSource {
     variableComment: json['variableComment'] as String?,
     concurrentRate: json['concurrentRate'] as String?,
     jsLib: json['jsLib'] as String?,
-    startStyle: json['articleStyle']?.toString(),
-    articleStyle: json['articleStyle'] is int
-        ? json['articleStyle'] as int
-        : int.tryParse(json['articleStyle']?.toString() ?? ''),
+    startStyle: json['articleStyle'] as String?,
     ruleArticles: json['ruleArticles'] as String?,
     ruleNextPage: json['ruleNextPage'] as String?,
     ruleTitle: json['ruleTitle'] as String?,
@@ -292,21 +238,5 @@ class RssSource implements JsSource {
     contentBlacklist: json['contentBlacklist'] as String?,
     shouldOverrideUrlLoading: json['shouldOverrideUrlLoading'] as String?,
     enabled: json['enabled'] as bool? ?? true,
-    enabledCookieJar: json['enabledCookieJar'] as bool? ?? false,
-    enableJs: json['enableJs'] as bool? ?? false,
-    loadWithBaseUrl: json['loadWithBaseUrl'] as bool? ?? false,
-    preload: json['preload'] as bool? ?? false,
-    singleUrl: json['singleUrl'] as bool? ?? false,
-    cacheFirst: json['cacheFirst'] as bool? ?? false,
-    redirectPolicy: json['redirectPolicy']?.toString(),
-    customOrder: json['customOrder'] is int
-        ? json['customOrder'] as int
-        : int.tryParse(json['customOrder']?.toString() ?? ''),
-    lastUpdateTime: json['lastUpdateTime'] is int
-        ? json['lastUpdateTime'] as int
-        : int.tryParse(json['lastUpdateTime']?.toString() ?? ''),
-    sourceType: json['type'] is int
-        ? json['type'] as int
-        : int.tryParse(json['type']?.toString() ?? '') ?? 0,
   );
 }

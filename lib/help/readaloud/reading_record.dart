@@ -14,8 +14,7 @@ class ReadingRecordService {
     _currentAuthor = author;
   }
 
-  /// 结束阅读会话并保存记录。
-  /// duration 单位为**秒**（与 getTodayDuration/getTotalDuration/formatDuration 口径一致）。
+  /// 结束阅读会话并保存记录
   Future<void> endSession({int? chapterIndex, String? chapterTitle, int? startPos, int? endPos}) async {
     if (_sessionStart == null || _currentBook == null) return;
 
@@ -29,11 +28,11 @@ class ReadingRecordService {
     _sessionStart = null;
   }
 
-  /// 获取今日阅读时长（秒）——只统计时长记录，排除进度快照
+  /// 获取今日阅读时长（秒）
   Future<int> getTodayDuration() async {
     final now = DateTime.now();
     final startOfDay = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
-    final records = await _db.getDurationRecords();
+    final records = await _db.getReadRecords();
     return records
         .where((r) => r.date >= startOfDay)
         .fold<int>(0, (sum, r) => sum + r.duration);
@@ -41,17 +40,17 @@ class ReadingRecordService {
 
   /// 获取总阅读时长（秒）
   Future<int> getTotalDuration() async {
-    final records = await _db.getDurationRecords();
+    final records = await _db.getReadRecords();
     return records.fold<int>(0, (sum, r) => sum + r.duration);
   }
 
-  /// 获取阅读天数（仅计入有实际时长的记录，避免进度快照虚高）
+  /// 获取阅读天数
   Future<int> getReadingDays() async {
-    final records = await _db.getDurationRecords();
+    final records = await _db.getReadRecords();
     final days = <String>{};
     for (final r in records) {
       final readDate = r.date as int?;
-      if (readDate != null && r.duration > 0) {
+      if (readDate != null) {
         final date = DateTime.fromMillisecondsSinceEpoch(readDate);
         days.add('${date.year}-${date.month}-${date.day}');
       }
@@ -61,11 +60,11 @@ class ReadingRecordService {
 
   /// 连续阅读天数（从今天起，若今天无记录则从昨天起算，向前连续）
   Future<int> getContinuousDays() async {
-    final records = await _db.getDurationRecords();
+    final records = await _db.getReadRecords();
     final days = <String>{};
     for (final r in records) {
       final t = r.date as int?;
-      if (t == null || r.duration <= 0) continue;
+      if (t == null) continue;
       final d = DateTime.fromMillisecondsSinceEpoch(t);
       days.add('${d.year}-${d.month}-${d.day}');
     }
@@ -84,7 +83,7 @@ class ReadingRecordService {
 
   /// 获取最近N天的阅读统计
   Future<Map<String, int>> getRecentStats(int days) async {
-    final records = await _db.getDurationRecords();
+    final records = await _db.getReadRecords();
     final result = <String, int>{};
     final now = DateTime.now();
     for (int i = 0; i < days; i++) {
@@ -107,7 +106,7 @@ class ReadingRecordService {
 
   /// 获取每本书的阅读时长
   Future<Map<String, int>> getBookStats() async {
-    final records = await _db.getDurationRecords();
+    final records = await _db.getReadRecords();
     final result = <String, int>{};
     for (final r in records) {
       final key = '${r.bookName}_${r.author}';

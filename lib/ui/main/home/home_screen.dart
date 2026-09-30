@@ -10,7 +10,6 @@ import 'package:legado_md3/ui/book/detail/book_detail_screen.dart';
 import 'package:legado_md3/data/model/homepage_module.dart';
 import 'package:legado_md3/ui/main/homepage/homepage_manage_screen.dart';
 import 'package:legado_md3/ui/main/discover/explore_books_screen.dart';
-import 'package:legado_md3/ui/stats/read_record_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -104,9 +103,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   // 最近阅读
                   if (_recentBooks.isNotEmpty) ...[
-                    _buildSectionHeader('最近阅读', onMore: () {
-                      Navigator.push(context, MaterialPageRoute(builder: (_) => const ReadRecordScreen()));
-                    }),
+                    _buildSectionHeader('最近阅读', onMore: () {}),
                     const SizedBox(height: 8),
                     _buildRecentBooks(),
                     const SizedBox(height: 16),

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../../../di/book_provider.dart';
+import '../../../di/book_provider.dart';
 
 /// 书架配置页面 - 对齐原版BookshelfConfigSheet
 class BookshelfConfigScreen extends StatefulWidget {
@@ -18,8 +18,9 @@ class _BookshelfConfigScreenState extends State<BookshelfConfigScreen> {
   // 排序
   int _sortType = 0; // 0: 最近阅读 1: 书名 2: 作者 3: 添加时间 4: 手动
   bool _sortAscending = false;
-  // 布局: 0详细列表 1紧凑列表 2三列网格 3四列紧凑网格 4大封面
-  int _layout = 0;
+  // 布局
+  int _layoutMode = 0; // 0: 列表 1: 网格
+  int _gridStyle = 0; // 0: 固定 1: 紧凑
   int _columnCount = 3;
   double _coverWidth = 100;
   bool _compactTitle = false;
@@ -46,8 +47,7 @@ class _BookshelfConfigScreenState extends State<BookshelfConfigScreen> {
   int _updateLimit = 0;
 
   static const _sortNames = ['最近阅读', '书名', '作者', '添加时间', '手动排序'];
-  static const _groupStyleNames = ['折叠分组(顶部标签)', '平铺分组(分区展示)'];
-  static const _layoutNames = ['详细列表', '紧凑列表', '三列网格', '紧凑网格', '大封面'];
+  static const _groupStyleNames = ['折叠分组', '平铺分组'];
 
   @override
   void initState() {
@@ -62,14 +62,8 @@ class _BookshelfConfigScreenState extends State<BookshelfConfigScreen> {
       _hideEmptyGroups = prefs.getBool('bs_hideEmptyGroups') ?? false;
       _sortType = prefs.getInt('bs_sortType') ?? 0;
       _sortAscending = prefs.getBool('bs_sortAscending') ?? false;
-      // 新布局字段优先；兼容旧的 layoutMode/gridStyle
-      final savedLayout = prefs.getInt('bs_layout');
-      if (savedLayout != null) {
-        _layout = savedLayout;
-      } else {
-        final mode = prefs.getInt('bs_layoutMode') ?? 0;
-        _layout = mode == 1 ? ((prefs.getInt('bs_gridStyle') ?? 0) == 1 ? 3 : 2) : 0;
-      }
+      _layoutMode = prefs.getInt('bs_layoutMode') ?? 0;
+      _gridStyle = prefs.getInt('bs_gridStyle') ?? 0;
       _columnCount = prefs.getInt('bs_columnCount') ?? 3;
       _coverWidth = prefs.getDouble('bs_coverWidth') ?? 100;
       _compactTitle = prefs.getBool('bs_compactTitle') ?? false;
@@ -126,27 +120,28 @@ class _BookshelfConfigScreenState extends State<BookshelfConfigScreen> {
       body: ListView(children: [
         // 布局模式
         _sectionTitle('书架布局'),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Wrap(spacing: 8, runSpacing: 8, children: [
-            for (var i = 0; i < _layoutNames.length; i++)
-              ChoiceChip(
-                label: Text(_layoutNames[i]),
-                selected: _layout == i,
-                onSelected: (_) {
-                  setState(() => _layout = i);
-                  _save('bs_layout', i);
-                  Provider.of<BookProvider>(context, listen: false)
-                      .setBookshelfLayout(i);
-                },
-              ),
-          ]),
+        ListTile(
+          dense: true, title: const Text('布局模式'),
+          trailing: SegmentedButton<int>(
+            segments: const [ButtonSegment(value: 0, label: Text('列表')), ButtonSegment(value: 1, label: Text('网格'))],
+            selected: {_layoutMode},
+            onSelectionChanged: (s) { setState(() => _layoutMode = s.first); _save('bs_layoutMode', s.first);
+              Provider.of<BookProvider>(context, listen: false).setBookshelfLayout(s.first);
+            },
+          ),
         ),
-        const SizedBox(height: 8),
-        if (_layout >= 2) ...[
+        if (_layoutMode == 1) ...[
           ListTile(
-            dense: true, title: Text('网格列数: $_columnCount'),
-            subtitle: Slider(value: _columnCount.toDouble(), min: 2, max: 8, divisions: 6,
+            dense: true, title: const Text('网格样式'),
+            trailing: DropdownButton<int>(
+              value: _gridStyle, underline: const SizedBox(),
+              items: const [DropdownMenuItem(value: 0, child: Text('固定')), DropdownMenuItem(value: 1, child: Text('紧凑'))],
+              onChanged: (v) { setState(() => _gridStyle = v ?? 0); _save('bs_gridStyle', v ?? 0); },
+            ),
+          ),
+          ListTile(
+            dense: true, title: Text('行列数: $_columnCount'),
+            subtitle: Slider(value: _columnCount.toDouble(), min: 1, max: 8, divisions: 7,
               label: '$_columnCount',
               onChanged: (v) => setState(() => _columnCount = v.toInt()),
               onChangeEnd: (v) => _save('bs_columnCount', v.toInt())),

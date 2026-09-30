@@ -15,23 +15,9 @@ if (localPropertiesFile.exists()) {
 def flutterVersionCode = localProperties.getProperty('flutter.versionCode') ?: '1'
 def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '1.0'
 
-// Release 签名：优先读取 android/key.properties（本地开发或 CI 注入），
-// 缺失时回退 debug 签名，保证无密钥环境下 release 构建仍可编译验证。
-def keystoreProperties = new Properties()
-def keystorePropertiesFile = rootProject.file('key.properties')
-def hasKeystoreConfig = keystorePropertiesFile.exists()
-if (hasKeystoreConfig) {
-    keystorePropertiesFile.withReader('UTF-8') { reader ->
-        keystoreProperties.load(reader)
-    }
-}
-// 兼容 PKCS#12：storeFile 以 .p12/.pfx 结尾时显式声明 storeType（Android Gradle Plugin 原生支持）
-def storeFileName = hasKeystoreConfig ? (keystoreProperties.getProperty('storeFile') ?: '') : ''
-def keyStoreType = (storeFileName.toLowerCase().endsWith('.p12') || storeFileName.toLowerCase().endsWith('.pfx')) ? 'PKCS12' : null
-
 android {
     namespace "com.legado.md3"
-    compileSdk 36
+    compileSdk 34
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -50,26 +36,14 @@ android {
     defaultConfig {
         applicationId "com.legado.md3"
         minSdk 21
-        targetSdk 36
+        targetSdk 34
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
     }
 
-    signingConfigs {
-        if (hasKeystoreConfig) {
-            release {
-                keyAlias = keystoreProperties['keyAlias']
-                keyPassword = keystoreProperties['keyPassword']
-                storeFile = file(keystoreProperties['storeFile'])
-                storePassword = keystoreProperties['storePassword']
-                if (keyStoreType) { storeType keyStoreType }
-            }
-        }
-    }
-
     buildTypes {
         release {
-            signingConfig hasKeystoreConfig ? signingConfigs.release : signingConfigs.debug
+            signingConfig signingConfigs.debug
             minifyEnabled false
             shrinkResources false
         }

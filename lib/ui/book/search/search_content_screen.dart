@@ -81,9 +81,7 @@ class _SearchContentScreenState extends State<SearchContentScreen> {
             final i = uncached[cursor++];
             final ch = _chapters[i];
             try {
-              final text = await _engine.getContent(source, ch.url,
-                  bookInfo: widget.book.jsContext(),
-                  chapter: ch.jsContext(widget.book.bookUrl));
+              final text = await _engine.getContent(source, ch.url);
               if (text != null && text.isNotEmpty) {
                 ch.content = text;
                 await _db.updateChapterContent(widget.book.name, widget.book.author, i, text);

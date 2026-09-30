@@ -95,4 +95,18 @@ void main() {
       expect(r, '第一本书');
     });
   });
+
+  group('书源全局变量 variable 注入', () {
+    test('JS 求值可引用注入变量', () {
+      final p = RulePipeline()..sourceVars = {'site': 'example.com'};
+      final v = p.extractStringFromRaw('<a>hi</a>', '@js:result + "|" + site');
+      expect(v, '<a>hi</a>|example.com');
+    });
+
+    test('未注入时不影响求值', () {
+      final p = RulePipeline();
+      final v = p.extractStringFromRaw('<a>hi</a>', '@js:result');
+      expect(v, '<a>hi</a>');
+    });
+  });
 }

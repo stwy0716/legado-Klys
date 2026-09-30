@@ -22,8 +22,6 @@ import 'package:legado_md3/ui/backup/backup_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:legado_md3/constant/app_theme.dart';
 import 'package:legado_md3/data/local/app_database.dart';
-import 'package:legado_md3/di/book_provider.dart';
-import 'package:legado_md3/data/model/read_config.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -75,39 +73,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadSettings() async {
     _prefs = await SharedPreferences.getInstance();
-    // 阅读类设置以 ReadProvider.config 为唯一真源（与阅读页消费链路一致），
-    // 其余非阅读项仍从 prefs 读取。
-    final rc = context.read<ReadProvider>().config;
     setState(() {
       _autoUpdate = _prefs?.getBool('auto_update') ?? true;
       _autoUpdateHours = _prefs?.getInt('auto_update_hours') ?? 6;
       _wifiOnly = _prefs?.getBool('wifi_only') ?? false;
-      _volumeKeyPage = rc.volumeKeyPage;
-      _keepScreenOn = rc.keepScreenOn;
-      _showMenuOnTap = rc.showMenuOnTap;
+      _volumeKeyPage = _prefs?.getBool('volume_key_page') ?? true;
+      _keepScreenOn = _prefs?.getBool('keep_screen_on') ?? true;
+      _showMenuOnTap = _prefs?.getBool('show_menu_on_tap') ?? true;
       _showNotification = _prefs?.getBool('show_notification') ?? true;
       _landscapeLock = _prefs?.getBool('landscape_lock') ?? false;
-      _autoNextPage = rc.autoNextPage;
+      _autoNextPage = _prefs?.getBool('auto_next_page') ?? false;
       _translateEnabled = _prefs?.getBool('translate_enabled') ?? false;
       _simulateReading = _prefs?.getBool('simulate_reading') ?? false;
-      _boldText = rc.boldText;
-      _showStatusBar = rc.statusBarVisibility;
-      _showTitle = rc.titleVisibility;
-      _showTime = rc.timeVisibility;
-      _showBattery = rc.batteryVisibility;
-      _showPageNumber = rc.pageNumberVisibility;
-      _preDownloadCount = rc.preDownloadCount;
-      _textAlign = rc.textAlign;
-      _textIndent = rc.textIndent;
-      _paragraphSpacing = rc.paragraphSpacing;
-      _pageAnim = rc.pageAnim;
+      _boldText = _prefs?.getBool('bold_text') ?? false;
+      _showStatusBar = _prefs?.getBool('show_status_bar') ?? true;
+      _showTitle = _prefs?.getBool('show_title') ?? true;
+      _showTime = _prefs?.getBool('show_time') ?? true;
+      _showBattery = _prefs?.getBool('show_battery') ?? true;
+      _showPageNumber = _prefs?.getBool('show_page_number') ?? true;
+      _preDownloadCount = _prefs?.getInt('pre_download_count') ?? 5;
+      _textAlign = _prefs?.getInt('text_align') ?? 2;
+      _textIndent = _prefs?.getInt('text_indent') ?? 2;
+      _paragraphSpacing = _prefs?.getInt('paragraph_spacing') ?? 1;
+      _pageAnim = _prefs?.getInt('page_anim') ?? 0;
     });
     _calcCacheSize();
-  }
-
-  /// 阅读类设置统一写入 ReadProvider（内部自动持久化到 read_config_json）
-  void _setRead(void Function(ReadConfig c) updater) {
-    context.read<ReadProvider>().updateConfig(updater);
   }
 
   Future<void> _calcCacheSize() async {
@@ -140,19 +130,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (_) {}
     final p = await SharedPreferences.getInstance();
     if (p.getBool('web_service_enabled') ?? false) {
-      try {
-        await _webService.start();
-        _webServiceEnabled = true;
-      } catch (_) {
-        // 自动恢复失败：关闭开关并提示，避免界面显示"已启用"但实际未监听
-        _webServiceEnabled = false;
-        await p.setBool('web_service_enabled', false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Web服务自动启动失败，已停用。可重新手动开启'), duration: Duration(seconds: 3)),
-          );
-        }
-      }
+      _webServiceEnabled = true;
+      _webService.start().catchError((_) {});
     }
     if (mounted) setState(() {});
   }
@@ -227,40 +206,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
             trailing: DropdownButton<int>(
               value: _pageAnim,
               items: List.generate(_pageAnimNames.length, (i) => DropdownMenuItem(value: i, child: Text(_pageAnimNames[i]))),
-              onChanged: (v) => setState(() { _pageAnim = v ?? 0; _setRead((c) => c.pageAnim = _pageAnim); }),
+              onChanged: (v) => setState(() { _pageAnim = v ?? 0; _saveSetting('page_anim', _pageAnim); }),
             ),
           ),
           SwitchListTile(
             title: const Text('音量键翻页'),
             value: _volumeKeyPage,
-            onChanged: (v) => setState(() { _volumeKeyPage = v; _setRead((c) => c.volumeKeyPage = v); }),
+            onChanged: (v) => setState(() { _volumeKeyPage = v; _saveSetting('volume_key_page', v); }),
           ),
           SwitchListTile(
             title: const Text('保持屏幕常亮'),
             value: _keepScreenOn,
-            onChanged: (v) => setState(() { _keepScreenOn = v; _setRead((c) => c.keepScreenOn = v); }),
+            onChanged: (v) => setState(() { _keepScreenOn = v; _saveSetting('keep_screen_on', v); }),
           ),
           SwitchListTile(
             title: const Text('点击中央显示菜单'),
             value: _showMenuOnTap,
-            onChanged: (v) => setState(() { _showMenuOnTap = v; _setRead((c) => c.showMenuOnTap = v); }),
+            onChanged: (v) => setState(() { _showMenuOnTap = v; _saveSetting('show_menu_on_tap', v); }),
           ),
           SwitchListTile(
             title: const Text('自动翻页'),
             value: _autoNextPage,
-            onChanged: (v) => setState(() { _autoNextPage = v; _setRead((c) => c.autoNextPage = v); }),
+            onChanged: (v) => setState(() { _autoNextPage = v; _saveSetting('auto_next_page', v); }),
           ),
           SwitchListTile(
             title: const Text('粗体文字'),
             value: _boldText,
-            onChanged: (v) => setState(() { _boldText = v; _setRead((c) => c.boldText = v); }),
+            onChanged: (v) => setState(() { _boldText = v; _saveSetting('bold_text', v); }),
           ),
           ListTile(
             title: const Text('对齐方式'),
             trailing: DropdownButton<int>(
               value: _textAlign,
               items: List.generate(_alignNames.length, (i) => DropdownMenuItem(value: i, child: Text(_alignNames[i]))),
-              onChanged: (v) => setState(() { _textAlign = v ?? 2; _setRead((c) => c.textAlign = _textAlign); }),
+              onChanged: (v) => setState(() { _textAlign = v ?? 2; _saveSetting('text_align', _textAlign); }),
             ),
           ),
           ListTile(
@@ -268,7 +247,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             trailing: DropdownButton<int>(
               value: _textIndent,
               items: List.generate(5, (i) => DropdownMenuItem(value: i, child: Text('${i * 2}字符'))),
-              onChanged: (v) => setState(() { _textIndent = v ?? 2; _setRead((c) => c.textIndent = _textIndent); }),
+              onChanged: (v) => setState(() { _textIndent = v ?? 2; _saveSetting('text_indent', _textIndent); }),
             ),
           ),
           ListTile(
@@ -276,33 +255,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
             trailing: DropdownButton<int>(
               value: _paragraphSpacing,
               items: List.generate(5, (i) => DropdownMenuItem(value: i, child: Text('$i行'))),
-              onChanged: (v) => setState(() { _paragraphSpacing = v ?? 1; _setRead((c) => c.paragraphSpacing = _paragraphSpacing); }),
+              onChanged: (v) => setState(() { _paragraphSpacing = v ?? 1; _saveSetting('paragraph_spacing', _paragraphSpacing); }),
             ),
           ),
           SwitchListTile(
             title: const Text('显示状态栏'),
             value: _showStatusBar,
-            onChanged: (v) => setState(() { _showStatusBar = v; _setRead((c) => c.statusBarVisibility = v); }),
+            onChanged: (v) => setState(() { _showStatusBar = v; _saveSetting('show_status_bar', v); }),
           ),
           SwitchListTile(
             title: const Text('显示标题'),
             value: _showTitle,
-            onChanged: (v) => setState(() { _showTitle = v; _setRead((c) => c.titleVisibility = v); }),
+            onChanged: (v) => setState(() { _showTitle = v; _saveSetting('show_title', v); }),
           ),
           SwitchListTile(
             title: const Text('显示时间'),
             value: _showTime,
-            onChanged: (v) => setState(() { _showTime = v; _setRead((c) => c.timeVisibility = v); }),
+            onChanged: (v) => setState(() { _showTime = v; _saveSetting('show_time', v); }),
           ),
           SwitchListTile(
             title: const Text('显示电量'),
             value: _showBattery,
-            onChanged: (v) => setState(() { _showBattery = v; _setRead((c) => c.batteryVisibility = v); }),
+            onChanged: (v) => setState(() { _showBattery = v; _saveSetting('show_battery', v); }),
           ),
           SwitchListTile(
             title: const Text('显示页码'),
             value: _showPageNumber,
-            onChanged: (v) => setState(() { _showPageNumber = v; _setRead((c) => c.pageNumberVisibility = v); }),
+            onChanged: (v) => setState(() { _showPageNumber = v; _saveSetting('show_page_number', v); }),
           ),
           const Divider(),
 
@@ -334,7 +313,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             trailing: DropdownButton<int>(
               value: _preDownloadCount,
               items: [0, 1, 3, 5, 10, 20].map((v) => DropdownMenuItem(value: v, child: Text('$v章'))).toList(),
-              onChanged: (v) => setState(() { _preDownloadCount = v ?? 5; _setRead((c) => c.preDownloadCount = _preDownloadCount); }),
+              onChanged: (v) => setState(() { _preDownloadCount = v ?? 5; _saveSetting('pre_download_count', _preDownloadCount); }),
             ),
           ),
           const Divider(),
@@ -657,9 +636,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _showWebServiceDialog() {
     showDialog(context: context, builder: (context) => AlertDialog(
       title: const Text('Web服务'),
-      content: Column(mainAxisSize: MainAxisSize.min, children: [
-        ListTile(leading: const Icon(Icons.wifi), title: const Text('本机地址'), subtitle: Text('http://$_lanIp:1122')),
-        ListTile(leading: const Icon(Icons.info_outline), title: const Text('说明'), subtitle: Text(_webServiceEnabled ? '在同一局域网下，通过浏览器访问上述地址管理书籍' : 'Web服务当前未运行，请先开启上方开关')),
+      content: const Column(mainAxisSize: MainAxisSize.min, children: [
+        ListTile(leading: Icon(Icons.wifi), title: Text('服务地址'), subtitle: Text('http://localhost:1122')),
+        ListTile(leading: Icon(Icons.devices), title: Text('设备地址'), subtitle: Text('http://192.168.1.100:1122')),
+        ListTile(leading: Icon(Icons.info_outline), title: Text('说明'), subtitle: Text('在同一局域网下，通过浏览器访问上述地址管理书籍')),
       ]),
       actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭'))],
     ));
@@ -711,7 +691,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context) => AlertDialog(
         title: const Text('关于阅读 MD3'),
         content: const Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('版本: 3.29.0'),
+          Text('版本: 3.26.7'),
           SizedBox(height: 8),
           Text('基于Legado MD3风格的跨平台阅读应用'),
           SizedBox(height: 8),

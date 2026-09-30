@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:legado_md3/data/model/bookmark.dart';
@@ -58,7 +57,6 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
     }
   }
   final ReadingRecordService _recordService = ReadingRecordService();
-  final Battery _battery = Battery();
   List<BookChapter> _chapters = [];
   int _currentChapterIndex = 0;
   String? _content;
@@ -85,35 +83,10 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
   int _preDownload = 5;
   // 正在预缓存的章节下标，避免重复请求
   final Set<int> _prefetching = {};
-  // 当前章加载失败标记（用于展示重试入口，不再把错误文案当正文缓存）
-  bool _chapterLoadFailed = false;
-  // 页脚电量（battery_plus 实时读取，失败回退图标）
-  double? _batteryLevel;
-  Timer? _footerTimer;
 
   Future<void> _loadDownloadConfig() async {
     final p = await SharedPreferences.getInstance();
     if (mounted) setState(() => _preDownload = p.getInt('dc_preDownload') ?? 5);
-  }
-
-  /// 页脚时间/电量定时刷新：每分钟一次；电量读取失败静默降级为图标
-  void _startFooterTicker() {
-    _footerTimer?.cancel();
-    _refreshBattery();
-    _footerTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (!mounted) return;
-      setState(() {});
-      _refreshBattery();
-    });
-  }
-
-  Future<void> _refreshBattery() async {
-    try {
-      final int level = await _battery.batteryLevel;
-      if (mounted) setState(() => _batteryLevel = level.toDouble());
-    } catch (_) {
-      // 不可用时保持 null，UI 回退到静态图标
-    }
   }
 
   /// 后台预缓存当前章之后的 [_preDownload] 章，失败静默，不影响阅读
@@ -131,9 +104,7 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
       if (_prefetching.contains(i)) return;
       _prefetching.add(i);
       try {
-        final content = await _engine.getContent(source, _chapters[i].url,
-            bookInfo: widget.book.jsContext(),
-            chapter: _chapters[i].jsContext(widget.book.bookUrl));
+        final content = await _engine.getContent(source, _chapters[i].url);
         if (content != null && content.isNotEmpty) {
           await _db.updateChapterContent(widget.book.name, widget.book.author, i, content);
         }
@@ -198,14 +169,12 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
     _currentChapterIndex = widget.initialChapter ?? widget.book.durChapterIndex;
     _recordService.startSession(widget.book.name, widget.book.author);
     _ttsService.init();
-    _startFooterTicker();
     _loadData();
   }
 
   @override
   void dispose() {
     _autoReadTimer?.cancel();
-    _footerTimer?.cancel();
     _menuController.dispose();
     _pageController.dispose();
     _recordService.endSession(
@@ -258,8 +227,7 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
       final sources = await _db.getAllSources(enabled: true);
       final source = sources.where((s) => s.bookSourceUrl == widget.book.origin).firstOrNull;
       if (source != null && widget.book.noteUrl != null) {
-        final chapters = await _engine.getToc(source, widget.book.noteUrl!,
-            bookInfo: widget.book.jsContext());
+        final chapters = await _engine.getToc(source, widget.book.noteUrl!);
         if (chapters.isNotEmpty) {
           _chapters = chapters;
           await _db.saveChapters(widget.book.name, widget.book.author, chapters);
@@ -285,24 +253,18 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
         if (source != null && chapter.url.isNotEmpty) {
           // 加载替换净化规则
           final replaceRules = await _db.getReplaceRules();
-          final content = await _engine.getContent(source, chapter.url,
-              replaceRules: replaceRules,
-              bookInfo: widget.book.jsContext(),
-              chapter: chapter.jsContext(widget.book.bookUrl));
+          final content = await _engine.getContent(source, chapter.url, replaceRules: replaceRules);
           if (content != null) {
             _content = content;
             await _db.updateChapterContent(widget.book.name, widget.book.author, index, content);
           }
         }
       } catch (_) {
-        // 不再把错误文案写入 _content（避免被当作正文缓存/分页），改为展示重试入口
-        _chapterLoadFailed = true;
-        _content = null;
+        _content = '加载失败，请检查网络';
       }
     } else {
       _content = chapter.content ?? '暂无内容';
     }
-    if (_content != null) _chapterLoadFailed = false;
 
     // 应用「字典规则」内容替换词典（关闭或无规则时原样返回）
     if (_content != null) _content = await ContentDictService.apply(_content!);
@@ -560,48 +522,19 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
   }
 
   Widget _buildReadingContent(ReadConfig config) {
-    if (_chapterLoadFailed) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.cloud_off, size: 40, color: Color(config.textColor).withOpacity(0.5)),
-            const SizedBox(height: 12),
-            Text('本章加载失败', style: TextStyle(color: Color(config.textColor))),
-            const SizedBox(height: 12),
-            FilledButton.tonalIcon(
-              icon: const Icon(Icons.refresh),
-              label: const Text('重试'),
-              onPressed: () => _loadChapterContent(_currentChapterIndex),
-            ),
-          ],
-        ),
-      );
-    }
-    // 翻页动画：pageAnim 0覆盖/1仿真/2滑动/3滚动/4无动画/5上下
-    // 3滚动/5上下 → 纵向翻页；其余为横向，1仿真在 PageView 上近似为默认滑动（需真机打磨）
-    final vertical = config.pageAnim == 3 || config.pageAnim == 5;
-    // 纵向翻页（滚动/上下）时，单页内容超出屏幕可继续滚动；横向保持原有行为
-    final pageChild = (child) => vertical
-        ? child
-        : SingleChildScrollView(
-            padding: EdgeInsets.fromLTRB(
-              config.paddingLeft.toDouble(),
-              config.paddingTop.toDouble(),
-              config.paddingRight.toDouble(),
-              config.paddingBottom.toDouble(),
-            ),
-            child: child,
-          );
     return PageView.builder(
       controller: _pageController,
-      scrollDirection: vertical ? Axis.vertical : Axis.horizontal,
-      physics: config.pageAnim == 4 ? const NeverScrollableScrollPhysics() : null,
       itemCount: _pages.length,
       onPageChanged: (page) => setState(() => _currentPage = page),
       itemBuilder: (context, index) {
-        return pageChild(
-          _textSelectable
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            config.paddingLeft.toDouble(),
+            config.paddingTop.toDouble(),
+            config.paddingRight.toDouble(),
+            config.paddingBottom.toDouble(),
+          ),
+          child: _textSelectable
               ? SelectionArea(
                   contextMenuBuilder: (context, state) {
                     // 兼容 Flutter 3.24：先复制选区，再从剪贴板读取选中文字（不依赖 currentTextSelection/currentSelectable）
@@ -653,16 +586,7 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
               ),
             ),
           if (config.batteryVisibility)
-            _batteryLevel != null
-                ? Text(
-                    '${_batteryLevel!.round()}%',
-                    style: TextStyle(
-                      fontSize: config.footerSize.toDouble(),
-                      color: Color(config.footerColor),
-                      fontWeight: config.footerBold ? FontWeight.bold : FontWeight.normal,
-                    ),
-                  )
-                : Icon(Icons.battery_full, size: 14, color: Color(config.footerColor)),
+            Icon(Icons.battery_full, size: 14, color: Color(config.footerColor)),
         ],
       ),
     );
@@ -1175,10 +1099,7 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
           final source = sources.where((s) => s.bookSourceUrl == widget.book.origin).firstOrNull;
           if (source != null) {
             final replaceRules = await _db.getReplaceRules();
-            final content = await _engine.getContent(source, chapter.url,
-                replaceRules: replaceRules,
-                bookInfo: widget.book.jsContext(),
-                chapter: chapter.jsContext(widget.book.bookUrl));
+            final content = await _engine.getContent(source, chapter.url, replaceRules: replaceRules);
             if (content != null) {
               await _db.updateChapterContent(widget.book.name, widget.book.author, i, content);
               cached++;
@@ -1453,10 +1374,7 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
       final source = sources.where((s) => s.bookSourceUrl == widget.book.origin).firstOrNull;
       if (source == null || ch.url.isEmpty) return null;
       final rules = await _db.getReplaceRules();
-      final content = await _engine.getContent(source, ch.url,
-          replaceRules: rules,
-          bookInfo: widget.book.jsContext(),
-          chapter: ch.jsContext(widget.book.bookUrl));
+      final content = await _engine.getContent(source, ch.url, replaceRules: rules);
       if (content != null && content.isNotEmpty) {
         await _db.updateChapterContent(widget.book.name, widget.book.author, ch.index, content);
         ch.content = content;

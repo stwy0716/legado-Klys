@@ -171,15 +171,9 @@ class _SearchScreenState extends State<SearchScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Row(
                   children: [
-                    TextButton(onPressed: () async {
-                      final all = await _db.getAllSources(enabled: true);
-                      setSheetState(() {
-                        _selectedSources.addAll(all.map((s) => s.bookSourceUrl));
-                      });
-                    }, child: const Text('全选')),
-                    TextButton(onPressed: () => setSheetState(() => _selectedSources.clear()), child: const Text('重置')),
+                    TextButton(onPressed: () => setSheetState(() => _selectedSources.clear()), child: const Text('全选')),
                     const Spacer(),
-                    FilledButton(onPressed: () => Navigator.pop(context), child: Text(_selectedSources.isEmpty ? '确定(全部源)' : '确定(${_selectedSources.length})')),
+                    FilledButton(onPressed: () => Navigator.pop(context), child: const Text('确定')),
                   ],
                 ),
               ),
@@ -333,7 +327,7 @@ class _SearchScreenState extends State<SearchScreen> {
       ],
     ),
     trailing: IconButton(icon: const Icon(Icons.add), onPressed: () => _addToShelf(book), tooltip: '加入书架'),
-    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => BookDetailScreen(book: Book(name: book.name, author: book.author, coverUrl: book.coverUrl, intro: book.intro, kind: book.kind, origin: book.origin, bookUrl: book.bookUrl, noteUrl: book.noteUrl, lastChapter: book.lastChapter, local: false)))),
+    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => BookDetailScreen(book: Book(name: book.name, author: book.author, coverUrl: book.coverUrl, intro: book.intro, kind: book.kind, origin: book.origin, noteUrl: book.noteUrl, lastChapter: book.lastChapter, local: false)))),
     onLongPress: () => _showResultMenu(book),
   );
 
@@ -348,7 +342,7 @@ class _SearchScreenState extends State<SearchScreen> {
       ListTile(
         leading: const Icon(Icons.info_outline),
         title: const Text('查看详情'),
-        onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => BookDetailScreen(book: Book(name: book.name, author: book.author, coverUrl: book.coverUrl, intro: book.intro, kind: book.kind, origin: book.origin, bookUrl: book.bookUrl, noteUrl: book.noteUrl, lastChapter: book.lastChapter, local: false)))); },
+        onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => BookDetailScreen(book: Book(name: book.name, author: book.author, coverUrl: book.coverUrl, intro: book.intro, kind: book.kind, origin: book.origin, noteUrl: book.noteUrl, lastChapter: book.lastChapter, local: false)))); },
       ),
       ListTile(
         leading: const Icon(Icons.add),
@@ -358,7 +352,7 @@ class _SearchScreenState extends State<SearchScreen> {
       ListTile(
         leading: const Icon(Icons.swap_horiz),
         title: const Text('换源'),
-        onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => ChangeSourceScreen(book: Book(name: book.name, author: book.author, coverUrl: book.coverUrl, intro: book.intro, kind: book.kind, origin: book.origin, bookUrl: book.bookUrl, noteUrl: book.noteUrl, lastChapter: book.lastChapter, local: false)))); },
+        onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => ChangeSourceScreen(book: Book(name: book.name, author: book.author, coverUrl: book.coverUrl, intro: book.intro, kind: book.kind, origin: book.origin, noteUrl: book.noteUrl, lastChapter: book.lastChapter, local: false)))); },
       ),
       ListTile(
         leading: const Icon(Icons.content_copy),
