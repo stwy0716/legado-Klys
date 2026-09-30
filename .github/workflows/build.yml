@@ -106,7 +106,7 @@ jobs:
         run: |
           # 仓库中的 iOS 工程缺少 Runner.xcodeproj / storyboard，
           # flutter create 仅补齐缺失文件，不覆盖已存在的 Info.plist、图标、AppDelegate、Podfile。
-          flutter create --platforms=ios --org com.legado .
+          flutter create --platforms=ios --org com.legado --project-name legado_md3 .
 
       - name: Install dependencies
         run: flutter pub get
