@@ -12,7 +12,7 @@
 ![Material](https://img.shields.io/badge/Design-Material%203-6750A4)
 ![License](https://img.shields.io/badge/License-GPL%20v3-orange)
 
-[最新下载](https://github.com/stwy0716/legado-K/releases) · [功能特性](#-功能特性) · [快速开始](#-快速开始) · [书源规则](#-书源规则)
+[最新下载](https://github.com/stwy0716/legado-Klys/releases) · [功能特性](#-功能特性) · [快速开始](#-快速开始) · [书源规则](#-书源规则)
 
 </div>
 
@@ -85,7 +85,7 @@ flutter build ios --release
 
 ## 📥 下载安装
 
-每个版本会在 [GitHub Releases](https://github.com/stwy0716/legado-K/releases) 发布预编译 APK：
+每个版本会在 [GitHub Releases](https://github.com/stwy0716/legado-Klys/releases) 发布预编译 APK：
 
 - `app-universal-release.apk`：通用包，适配所有架构
 - `app-arm64-release.apk`：arm64 专用，体积更小

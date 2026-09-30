@@ -125,10 +125,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     messenger.showSnackBar(const SnackBar(content: Text('正在检查更新...')));
     try {
       final dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 10), receiveTimeout: const Duration(seconds: 15)));
-      final resp = await dio.get('https://api.github.com/repos/stwy0716/legado-K/releases/latest');
+      final resp = await dio.get('https://api.github.com/repos/stwy0716/legado-Klys/releases/latest');
       final tag = (resp.data['tag_name'] ?? '').toString();
       final body = (resp.data['body'] ?? '').toString();
-      final htmlUrl = (resp.data['html_url'] ?? 'https://github.com/stwy0716/legado-K/releases').toString();
+      final htmlUrl = (resp.data['html_url'] ?? 'https://github.com/stwy0716/legado-Klys/releases').toString();
       final latest = tag.replaceAll(RegExp(r'[^0-9.]'), '').split('.').map((e) => int.tryParse(e) ?? 0).toList();
       final cur = [3, 26, 7];
       bool hasNew = false;
@@ -171,7 +171,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
         ListTile(
           dense: true, leading: const Icon(Icons.code, size: 20), title: const Text('GitHub项目'),
-          onTap: () { Navigator.pop(context); launchUrl(Uri.parse('https://github.com/stwy0716/legado-K'), mode: LaunchMode.externalApplication); },
+          onTap: () { Navigator.pop(context); launchUrl(Uri.parse('https://github.com/stwy0716/legado-Klys'), mode: LaunchMode.externalApplication); },
         ),
         ListTile(
           dense: true, leading: const Icon(Icons.people_outline, size: 20), title: const Text('贡献者'),
