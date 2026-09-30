@@ -54,5 +54,9 @@
     <string>需要访问文件以导入本地书籍</string>
     <key>NSCameraUsageDescription</key>
     <string>需要使用相机扫描书源二维码</string>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
 </dict>
 </plist>
