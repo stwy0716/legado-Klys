@@ -5,6 +5,7 @@ class RssArticle {
   String link;
   String? description;
   String? content;
+  String? image;
   int? pubDate;
   String? author;
   String? category;
@@ -21,6 +22,7 @@ class RssArticle {
     required this.link,
     this.description,
     this.content,
+    this.image,
     this.pubDate,
     this.author,
     this.category,
@@ -32,12 +34,22 @@ class RssArticle {
     this.favorite,
   });
 
+  /// 转为 JS rssArticle 上下文
+  Map<String, dynamic> jsContext() => {
+    'title': title,
+    'link': link,
+    'description': description ?? '',
+    'image': image ?? '',
+    'content': content ?? '',
+  };
+
   Map<String, dynamic> toMap() => {
     'id': id,
     'title': title,
     'link': link,
     'description': description,
     'content': content,
+    'image': image,
     'pubDate': pubDate,
     'author': author,
     'category': category,
@@ -55,6 +67,7 @@ class RssArticle {
     link: map['link'] as String,
     description: map['description'] as String?,
     content: map['content'] as String?,
+    image: map['image'] as String?,
     pubDate: map['pubDate'] as int?,
     author: map['author'] as String?,
     category: map['category'] as String?,

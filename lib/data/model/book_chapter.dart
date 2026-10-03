@@ -19,6 +19,16 @@ class BookChapter {
     this.variable,
   });
 
+  /// 传给书源 JS（ruleContent）的章节上下文。
+  Map<String, dynamic> jsContext([String? bookUrl]) => {
+    'index': index,
+    'title': title,
+    'url': url,
+    'bookUrl': bookUrl ?? '',
+    'isVolume': isVolume,
+    'variable': variable,
+  };
+
   /// 序列化为章节自身字段（Web 调试接口 / 导出用，不含书籍外键）
   Map<String, dynamic> toJson() => {
     'title': title,

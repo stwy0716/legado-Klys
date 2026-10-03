@@ -96,9 +96,14 @@ class _ChangeSourceScreenState extends State<ChangeSourceScreen> {
       ..coverUrl = (m.coverUrl?.isNotEmpty ?? false) ? m.coverUrl : widget.book.coverUrl
       ..lastChapter = (m.lastChapter?.isNotEmpty ?? false) ? m.lastChapter : widget.book.lastChapter
       ..intro = (m.intro?.isNotEmpty ?? false) ? m.intro : widget.book.intro;
+    // 旧源的目录与缓存章节 URL 已失效，清除并重置进度，阅读页会按新源重新拉取目录
+    await _db.deleteChapters(widget.book.name, widget.book.author);
+    widget.book.durChapterIndex = 0;
+    widget.book.durChapterPos = 0;
+    widget.book.lastChapterIndex = 0;
     await _db.updateBook(widget.book);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('换源成功')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('换源成功，将重新加载目录')));
       Navigator.pop(context, true);
     }
   }

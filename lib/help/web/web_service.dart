@@ -1,16 +1,20 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 import 'package:legado_md3/data/model/book_source.dart';
 import 'package:legado_md3/data/model/book.dart';
+import 'package:legado_md3/data/model/book_chapter.dart';
 import 'package:legado_md3/data/model/replace_rule.dart';
 import 'package:legado_md3/data/model/rss_source.dart';
+import 'package:legado_md3/help/source/source_engine.dart';
 import '../../data/local/app_database.dart';
 
 class WebService {
   final DatabaseService _db = DatabaseService();
+  final BookSourceEngine _engine = BookSourceEngine();
   HttpServer? _server;
   int port = 1122;
   bool get isRunning => _server != null;
@@ -54,9 +58,10 @@ class WebService {
     router.post('/saveReplaceRule', _saveReplaceRule);
     router.post('/deleteReplaceRule', _deleteReplaceRule);
 
-    // Web界面
-    router.get('/', _getWebUI);
-    router.get('/index.html', _getWebUI);
+    // web-yuedu3 静态前端（Vue 构建产物，位于 assets/web）
+    router.get('/', _serveIndex);
+    router.get('/index.html', _serveIndex);
+    router.get(r'/<asset|.*>', _serveAsset);
 
     final handler = const Pipeline()
         .addMiddleware(logRequests())
@@ -144,26 +149,132 @@ class WebService {
     return _jsonResponse({'success': true});
   }
 
-  // === 书籍API ===
+  // === 书籍 API（web-yuedu3 契约：以书源书址 url 标识书籍） ===
   Future<Response> _getBookshelf(Request request) async {
     final books = await _db.getAllBooks();
-    return _jsonResponse(books.map((b) => b.toJson()).toList());
+    final data = books.map((b) {
+      final j = b.toJson();
+      // web-yuedu3 以 url 作为书籍唯一标识
+      j['url'] = b.bookUrl ?? '';
+      j['durChapterTitle'] = j['durChapterTitle'] ?? b.lastChapter ?? '';
+      return j;
+    }).toList();
+    return _jsonResponse({'isSuccess': true, 'data': data});
+  }
+
+  /// 按书址找到书架书籍（bookUrl 或 noteUrl 匹配）。
+  Future<Book?> _findBookByUrl(String url) async {
+    if (url.isEmpty) return null;
+    final books = await _db.getAllBooks();
+    for (final b in books) {
+      if (b.bookUrl == url) return b;
+    }
+    for (final b in books) {
+      if (b.noteUrl == url) return b;
+    }
+    return null;
   }
 
   Future<Response> _getChapterList(Request request) async {
+    final url = request.url.queryParameters['url'] ??
+        request.url.queryParameters['bookUrl'] ??
+        '';
+    // 兼容旧的 name/author 入参
     final name = request.url.queryParameters['name'] ?? '';
     final author = request.url.queryParameters['author'] ?? '';
-    final chapters = await _db.getChapters(name, author);
-    return _jsonResponse(chapters.map((c) => {'title': c.title, 'url': c.url, 'index': c.index}).toList());
+    List<BookChapter> chapters;
+    Book? book;
+    if (url.isNotEmpty) {
+      book = await _findBookByUrl(url);
+      if (book == null) {
+        return _jsonResponse({'isSuccess': false, 'data': <dynamic>[]});
+      }
+      chapters = await _db.getChapters(book.name, book.author);
+      // 本地无目录时，实时用书源抓取并缓存
+      if (chapters.isEmpty && book.origin != null && book.noteUrl != null) {
+        final source = await _db.getSource(book.origin!);
+        if (source != null) {
+          try {
+            final fresh = await _engine
+                .getToc(source, book.noteUrl!, bookInfo: {
+              'bookUrl': book.bookUrl,
+              'name': book.name,
+              'author': book.author,
+              'tocUrl': book.noteUrl,
+              'durChapterIndex': book.durChapterIndex,
+            }).timeout(const Duration(seconds: 25));
+            if (fresh.isNotEmpty) {
+              chapters = fresh;
+              await _db.saveChapters(book.name, book.author, chapters);
+            }
+          } catch (_) {}
+        }
+      }
+    } else {
+      chapters = await _db.getChapters(name, author);
+    }
+    final data = chapters
+        .map((c) => {'index': c.index, 'title': c.title, 'url': c.url})
+        .toList();
+    return _jsonResponse({'isSuccess': true, 'data': data});
   }
 
   Future<Response> _getBookContent(Request request) async {
+    final url = request.url.queryParameters['url'] ??
+        request.url.queryParameters['bookUrl'] ??
+        '';
+    final index = int.tryParse(request.url.queryParameters['index'] ?? '0') ?? 0;
     final name = request.url.queryParameters['name'] ?? '';
     final author = request.url.queryParameters['author'] ?? '';
-    final index = int.tryParse(request.url.queryParameters['index'] ?? '0') ?? 0;
-    final chapters = await _db.getChapters(name, author);
-    if (index >= chapters.length) return _jsonResponse({'error': 'chapter not found'}, statusCode: 404);
-    return _jsonResponse({'title': chapters[index].title, 'content': chapters[index].content ?? ''});
+
+    Book? book;
+    List<BookChapter> chapters;
+    if (url.isNotEmpty) {
+      book = await _findBookByUrl(url);
+      if (book == null) {
+        return _jsonResponse({'isSuccess': false, 'data': ''}, statusCode: 404);
+      }
+      chapters = await _db.getChapters(book.name, book.author);
+    } else {
+      chapters = await _db.getChapters(name, author);
+    }
+    if (index < 0 || index >= chapters.length) {
+      return _jsonResponse({'isSuccess': false, 'data': ''}, statusCode: 404);
+    }
+    final chapter = chapters[index];
+    var content = chapter.content ?? '';
+
+    // 本地无正文时实时抓取并回写缓存
+    if (content.trim().isEmpty &&
+        book?.origin != null &&
+        chapter.url.isNotEmpty) {
+      final source = await _db.getSource(book!.origin!);
+      if (source != null) {
+        try {
+          final live = await _engine
+              .getContent(source, chapter.url,
+                  bookInfo: {
+                    'bookUrl': book.bookUrl,
+                    'name': book.name,
+                    'author': book.author,
+                    'tocUrl': book.noteUrl,
+                    'durChapterIndex': index,
+                  },
+                  chapter: {
+                    'index': chapter.index,
+                    'title': chapter.title,
+                    'url': chapter.url,
+                    'bookUrl': book.bookUrl,
+                  })
+              .timeout(const Duration(seconds: 25));
+          if (live != null && live.trim().isNotEmpty) {
+            content = live;
+            await _db.updateChapterContent(book.name, book.author, index, content);
+          }
+        } catch (_) {}
+      }
+    }
+    return _jsonResponse({'isSuccess': true, 'data': content});
   }
 
   Future<Response> _refreshToc(Request request) async {
@@ -277,118 +388,45 @@ class WebService {
     return _jsonResponse({'success': true});
   }
 
-  // === Web界面 ===
-  Future<Response> _getWebUI(Request request) async {
-    return Response(
-      200,
-      headers: {'Content-Type': 'text/html; charset=utf-8'},
-      body: _webUI,
-    );
+  // === web-yuedu3 静态前端 ===
+  Future<Response> _serveIndex(Request request) => _serveAsset(request, 'index.html');
+
+  Future<Response> _serveAsset(Request request, String asset) async {
+    var path = asset;
+    if (path.isEmpty) path = 'index.html';
+    // 防目录穿越
+    if (path.contains('..')) return Response.forbidden('forbidden');
+    final key = 'assets/web/$path';
+    try {
+      final data = await rootBundle.load(key);
+      final bytes = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+      return Response.ok(bytes, headers: {
+        'Content-Type': _mime(path),
+        'Cache-Control': 'no-cache',
+        'Access-Control-Allow-Origin': '*',
+      });
+    } catch (_) {
+      // SPA 回退到 index.html（hash 路由下通常用不到）
+      if (path != 'index.html') return _serveAsset(request, 'index.html');
+      return Response.notFound('web assets not found');
+    }
   }
 
-  String get _webUI => '''<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Legado Web管理</title>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
-.header { background: #6750A4; color: white; padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
-.header h1 { font-size: 20px; }
-.tabs { display: flex; background: white; border-bottom: 1px solid #e0e0e0; padding: 0 24px; }
-.tab { padding: 12px 20px; cursor: pointer; border-bottom: 2px solid transparent; color: #666; }
-.tab.active { color: #6750A4; border-bottom-color: #6750A4; }
-.content { padding: 24px; }
-.card { background: white; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-.card h3 { margin-bottom: 12px; color: #333; }
-table { width: 100%; border-collapse: collapse; }
-th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; }
-th { background: #fafafa; font-weight: 600; color: #555; }
-tr:hover { background: #f9f9f9; }
-.btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
-.btn-primary { background: #6750A4; color: white; }
-.btn-danger { background: #f44336; color: white; }
-.btn-sm { padding: 4px 8px; font-size: 12px; }
-input, textarea { padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; width: 100%; }
-.form-group { margin-bottom: 12px; }
-.form-group label { display: block; margin-bottom: 4px; color: #555; font-size: 13px; }
-.status { padding: 4px 8px; border-radius: 4px; font-size: 12px; }
-.status-on { background: #e8f5e9; color: #2e7d32; }
-.status-off { background: #ffebee; color: #c62828; }
-</style>
-</head>
-<body>
-<div class="header">
-  <h1>Legado Web管理</h1>
-  <span style="opacity:0.8;font-size:14px">地址: <span id="addr"></span></span>
-</div>
-<div class="tabs">
-  <div class="tab active" onclick="switchTab('bookshelf')">书架</div>
-  <div class="tab" onclick="switchTab('sources')">书源</div>
-  <div class="tab" onclick="switchTab('rss')">RSS订阅</div>
-  <div class="tab" onclick="switchTab('replace')">替换规则</div>
-</div>
-<div class="content">
-  <div id="bookshelf" class="tab-content">
-    <div class="card"><h3>书架书籍</h3><div id="bookshelf-list">加载中...</div></div>
-  </div>
-  <div id="sources" class="tab-content" style="display:none">
-    <div class="card"><h3>书源列表</h3><div id="source-list">加载中...</div></div>
-  </div>
-  <div id="rss" class="tab-content" style="display:none">
-    <div class="card"><h3>RSS订阅源</h3><div id="rss-list">加载中...</div></div>
-  </div>
-  <div id="replace" class="tab-content" style="display:none">
-    <div class="card"><h3>替换规则</h3><div id="replace-list">加载中...</div></div>
-  </div>
-</div>
-<script>
-document.getElementById('addr').textContent = window.location.href;
-function switchTab(name) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
-  event.target.classList.add('active');
-  document.getElementById(name).style.display = 'block';
-  loadData(name);
-}
-async function loadData(type) {
-  try {
-    const res = await fetch('/get' + type.charAt(0).toUpperCase() + type.slice(1));
-    const data = await res.json();
-    if (type === 'bookshelf') renderBookshelf(data);
-    else if (type === 'sources') renderSources(data);
-    else if (type === 'rss') renderRss(data);
-    else if (type === 'replace') renderReplace(data);
-  } catch(e) { document.getElementById(type + '-list').innerHTML = '加载失败: ' + e; }
-}
-function renderBookshelf(books) {
-  let html = '<table><tr><th>书名</th><th>作者</th><th>最新章节</th><th>来源</th></tr>';
-  books.forEach(b => { html += '<tr><td>' + (b.name||'') + '</td><td>' + (b.author||'') + '</td><td>' + (b.lastChapter||'') + '</td><td>' + (b.originName||'') + '</td></tr>'; });
-  html += '</table>';
-  document.getElementById('bookshelf-list').innerHTML = html;
-}
-function renderSources(sources) {
-  let html = '<table><tr><th>名称</th><th>URL</th><th>分组</th><th>状态</th></tr>';
-  sources.forEach(s => { html += '<tr><td>' + (s.bookSourceName||'') + '</td><td>' + (s.bookSourceUrl||'') + '</td><td>' + (s.bookSourceGroup||'') + '</td><td><span class="status ' + (s.enabled?'status-on':'status-off') + '">' + (s.enabled?'启用':'禁用') + '</span></td></tr>'; });
-  html += '</table>';
-  document.getElementById('source-list').innerHTML = html;
-}
-function renderRss(sources) {
-  let html = '<table><tr><th>名称</th><th>URL</th><th>分组</th></tr>';
-  sources.forEach(s => { html += '<tr><td>' + (s.name||'') + '</td><td>' + (s.url||'') + '</td><td>' + (s.group_name||'') + '</td></tr>'; });
-  html += '</table>';
-  document.getElementById('rss-list').innerHTML = html;
-}
-function renderReplace(rules) {
-  let html = '<table><tr><th>摘要</th><th>规则</th><th>替换为</th><th>状态</th></tr>';
-  rules.forEach(r => { html += '<tr><td>' + (r.replaceSummary||'') + '</td><td>' + (r.replaceRule||'') + '</td><td>' + (r.replacement||'') + '</td><td><span class="status ' + (r.enable?'status-on':'status-off') + '">' + (r.enable?'启用':'禁用') + '</span></td></tr>'; });
-  html += '</table>';
-  document.getElementById('replace-list').innerHTML = html;
-}
-loadData('bookshelf');
-</script>
-</body>
-</html>''';
+  String _mime(String path) {
+    final p = path.toLowerCase();
+    if (p.endsWith('.html')) return 'text/html; charset=utf-8';
+    if (p.endsWith('.js')) return 'application/javascript; charset=utf-8';
+    if (p.endsWith('.css')) return 'text/css; charset=utf-8';
+    if (p.endsWith('.json')) return 'application/json; charset=utf-8';
+    if (p.endsWith('.png')) return 'image/png';
+    if (p.endsWith('.jpg') || p.endsWith('.jpeg')) return 'image/jpeg';
+    if (p.endsWith('.gif')) return 'image/gif';
+    if (p.endsWith('.svg')) return 'image/svg+xml';
+    if (p.endsWith('.ico')) return 'image/x-icon';
+    if (p.endsWith('.woff')) return 'font/woff';
+    if (p.endsWith('.woff2')) return 'font/woff2';
+    if (p.endsWith('.ttf')) return 'font/ttf';
+    if (p.endsWith('.txt')) return 'text/plain; charset=utf-8';
+    return 'application/octet-stream';
+  }
 }

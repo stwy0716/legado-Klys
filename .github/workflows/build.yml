@@ -57,13 +57,13 @@ jobs:
             gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
           done
 
-      - name: Create stable Release v${{ steps.ver.outputs.version }}
+      - name: Create pre-release v${{ steps.ver.outputs.version }}
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.ver.outputs.version }}
-          name: "Legado MD3 v${{ steps.ver.outputs.version }} 正式版"
+          name: "Legado MD3 v${{ steps.ver.outputs.version }} 预发布版"
           body: |
-            ## Legado MD3 v${{ steps.ver.outputs.version }} 正式版
+            ## Legado MD3 v${{ steps.ver.outputs.version }} 预发布版
 
             - 提交: ${{ github.sha }}
             - 框架: Flutter 3.24（Android / iOS 双端）
@@ -77,8 +77,8 @@ jobs:
             安装到 iPhone 或上架 App Store 需在 macOS + Xcode 中配置 Apple 开发者签名后归档。
 
             > 本项目基于 GPL-3.0 开源。
-          prerelease: false
-          make_latest: 'true'
+          prerelease: true
+          make_latest: 'false'
           files: |
             /tmp/app-universal-release.apk
             /tmp/app-arm64-release.apk

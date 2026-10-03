@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:legado_md3/data/model/book.dart';
 import 'package:legado_md3/data/local/app_database.dart';
+import 'package:legado_md3/di/book_provider.dart';
 
 class ChangeCoverScreen extends StatefulWidget {
   final Book book;
@@ -18,8 +20,35 @@ class _ChangeCoverScreenState extends State<ChangeCoverScreen> {
   @override
   void initState() {
     super.initState();
-    _urlController.text = widget.book.coverUrl ?? '';
-    _previewUrl = _urlController.text;
+    // 优先显示已设置的自定义封面，否则用书源封面
+    final cur = widget.book.customCoverUrl ?? widget.book.coverUrl ?? '';
+    _urlController.text = cur;
+    _previewUrl = cur.isEmpty ? null : cur;
+  }
+
+  @override
+  void dispose() {
+    _urlController.dispose();
+    super.dispose();
+  }
+
+  void _setUrl(String? url) {
+    _urlController.text = url ?? '';
+    setState(() => _previewUrl = (url != null && url.isNotEmpty) ? url : null);
+  }
+
+  Future<void> _saveCover() async {
+    // 就地修改，避免重建 Book 丢失阅读进度/目录地址/分组等字段
+    final url = _urlController.text.trim();
+    widget.book.customCoverUrl = url.isEmpty ? null : url;
+    await _db.updateBook(widget.book);
+    await context.read<BookProvider>().loadBooks();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(url.isEmpty ? '已恢复书源默认封面' : '封面已更新')),
+      );
+      Navigator.pop(context, true);
+    }
   }
 
   @override
@@ -42,11 +71,14 @@ class _ChangeCoverScreenState extends State<ChangeCoverScreen> {
           TextField(
             controller: _urlController,
             decoration: const InputDecoration(labelText: '封面URL', border: OutlineInputBorder(), hintText: '输入图片URL'),
-            onChanged: (v) => setState(() => _previewUrl = v),
+            onChanged: (v) => setState(() => _previewUrl = v.isEmpty ? null : v),
           ),
           const SizedBox(height: 16),
           Row(children: [
-            Expanded(child: OutlinedButton(onPressed: () => _urlController.clear(), child: const Text('清除自定义封面'))),
+            Expanded(child: OutlinedButton(
+              onPressed: () => _setUrl(null),
+              child: const Text('恢复默认封面'),
+            )),
             const SizedBox(width: 16),
             Expanded(child: FilledButton(onPressed: _saveCover, child: const Text('保存'))),
           ]),
@@ -66,29 +98,8 @@ class _ChangeCoverScreenState extends State<ChangeCoverScreen> {
 
   Widget _buildPresetCover(String url) {
     return GestureDetector(
-      onTap: () {
-        _urlController.text = url;
-        setState(() => _previewUrl = url);
-      },
+      onTap: () => _setUrl(url),
       child: Container(width: 60, height: 80, decoration: BoxDecoration(borderRadius: BorderRadius.circular(4), border: Border.all(color: _previewUrl == url ? Theme.of(context).colorScheme.primary : Colors.grey)), child: ClipRRect(borderRadius: BorderRadius.circular(4), child: Image.network(url, fit: BoxFit.cover))),
     );
-  }
-
-  Future<void> _saveCover() async {
-    final updatedBook = Book(
-      name: widget.book.name, author: widget.book.author,
-      origin: widget.book.origin, originName: widget.book.originName,
-      bookUrl: widget.book.bookUrl, coverUrl: _urlController.text.isEmpty ? null : _urlController.text,
-      intro: widget.book.intro, kind: widget.book.kind,
-      lastChapter: widget.book.lastChapter,
-      latestChapterTime: widget.book.latestChapterTime,
-      lastCheckTime: widget.book.lastCheckTime,
-      order: widget.book.order,
-    );
-    await _db.updateBook(updatedBook);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('封面已更新')));
-      Navigator.pop(context, true);
-    }
   }
 }

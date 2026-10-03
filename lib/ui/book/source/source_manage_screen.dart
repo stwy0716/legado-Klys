@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:legado_md3/help/source/source_engine.dart';
+import 'package:legado_md3/help/storage/source_importer.dart';
 import 'package:flutter/material.dart';
 import 'package:legado_md3/ui/qrcode/qr_scanner_screen.dart';
 import 'package:flutter/services.dart';
@@ -32,10 +33,6 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
   bool _groupByDomain = false;
   final Set<String> _selectedIds = {};
   List<String> _groups = [];
-  // 过滤结果缓存：书源多时避免每次 setState 全量排序导致卡顿
-  List<BookSource>? _filterCache;
-  int _enabledCount = 0;
-  int _disabledCount = 0;
 
   @override
   void initState() {
@@ -52,20 +49,10 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
         .toSet()
         .toList()
       ..sort();
-    _invalidateFilter();
     if (mounted) setState(() => _isLoading = false);
   }
 
-  void _invalidateFilter() {
-    _filterCache = null;
-    _enabledCount = 0;
-    for (final s in _sources) { if (s.enabled == true) _enabledCount++; }
-    _disabledCount = _sources.length - _enabledCount;
-  }
-
   List<BookSource> get _filteredSources {
-    final cached = _filterCache;
-    if (cached != null) return cached;
     var result = _sources;
     if (_selectedGroup != null) {
       result = result.where((s) => s.bookSourceGroup == _selectedGroup).toList();
@@ -87,21 +74,19 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
       case 5: result.sort((a, b) => _sortAsc ? (a.respondTime ?? 0).compareTo(b.respondTime ?? 0) : (b.respondTime ?? 0).compareTo(a.respondTime ?? 0)); break;
       case 6: result.sort((a, b) => _sortAsc ? (a.enabled ? 0 : 1).compareTo(b.enabled ? 0 : 1) : (b.enabled ? 0 : 1).compareTo(a.enabled ? 0 : 1)); break;
     }
-    _filterCache = result;
     return result;
   }
 
   Future<void> _toggleSource(BookSource source, bool enabled) async {
     source.enabled = enabled;
-    _invalidateFilter();
     await _db.updateSource(source);
     setState(() {});
   }
 
   void _showSourceLogin(BookSource source) {
-    // 对齐原版：loginUi 为空走 WebView 登录，否则渲染表单；登录信息与 Cookie 持久化
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => SourceLoginScreen(source: source)));
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => SourceLoginScreen(source: source),
+    ));
   }
 
   Future<void> _deleteSource(BookSource source) async {
@@ -176,8 +161,8 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
                 if (text.startsWith('http')) {
                   _importFromUrl(text);
                 } else {
-                  final n = await _importSourcesFromString(text);
-                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('导入 $n 个书源')));
+                  final r = await _importSourcesFromString(text);
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(r.isEmpty ? '未识别到有效的书源/订阅源' : r.toString())));
                 }
               },
             ),
@@ -222,11 +207,10 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
         responseType: ResponseType.plain,
       ));
       final response = await dio.get<String>(url);
-      final body = response.data ?? '';
-      final count = await _importSourcesFromString(body);
+      final result = await SourceImporter.importRaw(response.data ?? '');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(count > 0 ? '成功导入 $count 个书源' : '未识别到有效书源')),
+          SnackBar(content: Text(result.isEmpty ? '未识别到有效的书源/订阅源' : result.toString())),
         );
       }
       _loadSources();
@@ -239,27 +223,9 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
     }
   }
 
-  /// 从字符串解析并导入书源，兼容 JSON 数组/单对象/包装对象/JSONL
-  Future<int> _importSourcesFromString(String raw) async {
-    var text = raw.trim();
-    if (text.isEmpty) return 0;
-    // 去除 BOM 与常见包裹
-    if (text.startsWith('﻿')) text = text.substring(1);
-    dynamic decoded;
-    try {
-      decoded = jsonDecode(text);
-    } catch (_) {
-      // 可能是 JSONL：逐行一个对象
-      final lines = text.split(RegExp(r'[\r\n]+')).where((l) => l.trim().startsWith('{')).toList();
-      if (lines.isEmpty) rethrow;
-      final arr = [];
-      for (final l in lines) {
-        try { arr.add(jsonDecode(l)); } catch (_) {}
-      }
-      decoded = arr;
-    }
-    return _importSourcesFromData(decoded);
-  }
+  /// 从字符串解析并导入（自动区分书源 / 订阅源）
+  Future<SourceImportResult> _importSourcesFromString(String raw) =>
+      SourceImporter.importRaw(raw);
 
   Future<void> _importFromFile() async {
     try {
@@ -269,10 +235,10 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
       );
       if (result == null || result.files.isEmpty || result.files.first.path == null) return;
       final content = await File(result.files.first.path!).readAsString();
-      int count = await _importSourcesFromString(content);
+      final r = await SourceImporter.importRaw(content);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('成功导入 $count 个书源')),
+          SnackBar(content: Text(r.isEmpty ? '未识别到有效的书源/订阅源' : r.toString())),
         );
       }
       _loadSources();
@@ -294,10 +260,10 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
         );
         return;
       }
-      int count = await _importSourcesFromString(clipboardData.text!);
+      final r = await SourceImporter.importRaw(clipboardData.text!);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('成功导入 $count 个书源')),
+          SnackBar(content: Text(r.isEmpty ? '未识别到有效的书源/订阅源' : r.toString())),
         );
       }
       _loadSources();
@@ -342,30 +308,6 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
     }
   }
 
-  Future<int> _importSourcesFromData(dynamic data) async {
-    // 解包常见订阅格式：{data:[...]} / {bookSources:[...]} / {result:[...]}
-    dynamic unwrapped = data;
-    if (unwrapped is Map && !unwrapped.containsKey('bookSourceUrl')) {
-      for (final key in ['data', 'bookSources', 'sources', 'result', 'list', 'records']) {
-        if (unwrapped[key] is List) { unwrapped = unwrapped[key]; break; }
-      }
-    }
-    int count = 0;
-    final list = unwrapped is List ? unwrapped : [unwrapped];
-    for (final item in list) {
-      if (item is Map) {
-        try {
-          final m = Map<String, dynamic>.from(item);
-          if ((m['bookSourceUrl'] ?? '').toString().isEmpty) continue;
-          final source = BookSource.fromJson(m);
-          await _db.insertSource(source);
-          count++;
-        } catch (_) {}
-      }
-    }
-    return count;
-  }
-
   void _showImportDialog() {
     final controller = TextEditingController();
     showDialog(
@@ -400,46 +342,82 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
           title: Text(sortNames[index]),
           value: index,
           groupValue: _sortBy,
-          onChanged: (v) => setState(() { _sortBy = v ?? 0; _invalidateFilter(); Navigator.pop(context); }),
+          onChanged: (v) => setState(() { _sortBy = v ?? 0; Navigator.pop(context); }),
         )),
         const Divider(),
-        SwitchListTile(title: const Text('降序排列'), value: !_sortAsc, onChanged: (v) => setState(() { _sortAsc = !v; _invalidateFilter(); })),
+        SwitchListTile(title: const Text('降序排列'), value: !_sortAsc, onChanged: (v) => setState(() => _sortAsc = !v)),
       ]),
     ));
   }
 
   void _showGroupManageDialog() {
-    final controller = TextEditingController();
-    showDialog(context: context, builder: (context) => AlertDialog(
-      title: const Text('分组管理'),
-      content: Column(mainAxisSize: MainAxisSize.min, children: [
-        const Text('现有分组:', style: TextStyle(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        ..._groups.map((g) => ListTile(
-          dense: true,
-          title: Text(g),
-          trailing: IconButton(icon: const Icon(Icons.delete, size: 18), onPressed: () async {
-            for (final s in _sources.where((s) => s.bookSourceGroup == g)) {
-              s.bookSourceGroup = null;
-              await _db.updateSource(s);
-            }
-            await _loadSources();
-            if (mounted) Navigator.pop(context);
-          }),
-        )),
-        const Divider(),
-        TextField(controller: controller, decoration: const InputDecoration(labelText: '新建分组', border: OutlineInputBorder())),
-      ]),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭')),
-        FilledButton(onPressed: () async {
-          if (controller.text.trim().isNotEmpty) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('分组"${controller.text.trim()}"已创建，在书源编辑中选择')));
-          }
-          Navigator.pop(context);
-        }, child: const Text('创建')),
-      ],
+    showDialog(context: context, builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setDialogState) => AlertDialog(
+        title: const Text('分组管理'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text('分组来源于书源；可在此重命名或解散（解散后书源回到未分组）。新建分组请在编辑书源或多选“添加分组”中设置。',
+                  style: TextStyle(fontSize: 12, color: Colors.grey)),
+            ),
+            if (_groups.isEmpty)
+              const Padding(padding: EdgeInsets.all(16), child: Text('暂无分组'))
+            else
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: _groups.map((g) => ListTile(
+                    dense: true,
+                    title: Text(g),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      IconButton(icon: const Icon(Icons.drive_file_rename_outline, size: 18), tooltip: '重命名', onPressed: () => _renameGroup(g)),
+                      IconButton(icon: const Icon(Icons.delete, size: 18), tooltip: '解散分组', onPressed: () async {
+                        for (final s in _sources.where((s) => s.bookSourceGroup == g)) {
+                          s.bookSourceGroup = null;
+                          await _db.updateSource(s);
+                        }
+                        await _loadSources();
+                        if (mounted) { setDialogState(() {}); }
+                      }),
+                    ]),
+                  )).toList(),
+                ),
+              ),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭')),
+        ],
+      ),
     ));
+  }
+
+  Future<void> _renameGroup(String oldName) async {
+    final controller = TextEditingController(text: oldName);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('重命名分组'),
+        content: TextField(controller: controller, decoration: const InputDecoration(labelText: '新分组名', border: OutlineInputBorder())),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('确定')),
+        ],
+      ),
+    );
+    if (newName == null || newName.isEmpty || newName == oldName) return;
+    for (final s in _sources.where((s) => s.bookSourceGroup == oldName)) {
+      s.bookSourceGroup = newName;
+      await _db.updateSource(s);
+    }
+    await _loadSources();
+    if (mounted) {
+      // 刷新分组管理弹窗内容
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已重命名为「$newName」')));
+    }
   }
 
   Future<void> _batchAction(String action) async {
@@ -562,12 +540,10 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
               switch (value) {
                 case 'enable_all':
                   for (final s in _sources) { s.enabled = true; _db.updateSource(s); }
-                  _invalidateFilter();
                   setState(() {});
                   break;
                 case 'disable_all':
                   for (final s in _sources) { s.enabled = false; _db.updateSource(s); }
-                  _invalidateFilter();
                   setState(() {});
                   break;
                 case 'select_mode':
@@ -594,17 +570,6 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
       ),
       body: Column(
         children: [
-          // 书源统计条
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: Row(children: [
-              Text('共 ${_sources.length} 个书源', style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-              const SizedBox(width: 16),
-              Text('启用 $_enabledCount', style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.primary)),
-              const SizedBox(width: 16),
-              Text('禁用 $_disabledCount', style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.outline)),
-            ]),
-          ),
           if (_groups.isNotEmpty)
             Container(
               height: 48,
@@ -615,7 +580,7 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
                   FilterChip(
                     label: const Text('全部'),
                     selected: _selectedGroup == null,
-                    onSelected: (_) => setState(() { _selectedGroup = null; _invalidateFilter(); }),
+                    onSelected: (_) => setState(() => _selectedGroup = null),
                   ),
                   const SizedBox(width: 8),
                   ..._groups.map((g) => Padding(
@@ -623,7 +588,7 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
                     child: FilterChip(
                       label: Text(g),
                       selected: _selectedGroup == g,
-                      onSelected: (_) => setState(() { _selectedGroup = g; _invalidateFilter(); }),
+                      onSelected: (_) => setState(() => _selectedGroup = g),
                     ),
                   )),
                 ],
@@ -656,28 +621,13 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
                           ),
                         ),
                         title: Text(source.bookSourceName, maxLines: 1, overflow: TextOverflow.ellipsis),
-                        subtitle: Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(source.bookSourceUrl, maxLines: 1, overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.outline)),
-                              if (source.bookSourceGroup != null && source.bookSourceGroup!.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: Theme.of(context).colorScheme.secondaryContainer.withAlpha(150),
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: Text(source.bookSourceGroup!,
-                                        style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSecondaryContainer)),
-                                  ),
-                                ),
-                            ],
-                          ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(source.bookSourceUrl, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)),
+                            if (source.bookSourceGroup != null && source.bookSourceGroup!.isNotEmpty)
+                              Text('分组: ${source.bookSourceGroup}', style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.primary)),
+                          ],
                         ),
                         trailing: _selectMode ? null : Switch(
                           value: source.enabled == true,
@@ -743,11 +693,9 @@ class _SourceManageScreenState extends State<SourceManageScreen> {
           // 用一次真实搜索判断规则是否可用（搜索地址缺失则探测根地址）
           bool ok = false;
           if ((s.searchUrl ?? '').isNotEmpty) {
-            // 对齐原版：配置了 checkKeyWord 的书源用校验词搜索并要求有结果
-            final ckw = (s.checkKeyWord ?? '').trim();
-            final keyword = ckw.isNotEmpty ? ckw : '测试';
-            final r = await engine.search(s, keyword, page: 1).timeout(const Duration(seconds: 12), onTimeout: () => []);
-            ok = ckw.isNotEmpty ? r.isNotEmpty : true; // 未配置校验词：能正常返回（即使空结果）说明规则链路通
+            final r = await engine.search(s, '测试', page: 1).timeout(const Duration(seconds: 12), onTimeout: () => []);
+            ok = true; // 能正常返回（即使空结果）说明规则链路通
+            if (r.isEmpty) ok = true;
           } else {
             final client = HttpClient();
             try {

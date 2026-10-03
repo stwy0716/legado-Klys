@@ -11,11 +11,9 @@ import 'package:legado_md3/di/book_provider.dart';
 import 'package:legado_md3/data/local/app_database.dart';
 import 'package:legado_md3/help/source/source_engine.dart';
 import 'package:legado_md3/ui/book/detail/book_detail_screen.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 
 class SearchScreen extends StatefulWidget {
-  final String? initialKeyword;
-  const SearchScreen({super.key, this.initialKeyword});
+  const SearchScreen({super.key});
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -24,7 +22,6 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _controller = TextEditingController();
   final DatabaseService _db = DatabaseService();
-  final BookSourceEngine _engine = BookSourceEngine();
   List<SearchBook> _results = [];
   List<String> _searchHistory = [];
   bool _isSearching = false;
@@ -34,16 +31,15 @@ class _SearchScreenState extends State<SearchScreen> {
   Set<String> _selectedSources = {};
   bool _groupBySource = false;
 
+  /// 搜索时命中「需要登录」的书源（loginCheckJs 判定），提示用户去登录
+  final List<String> _needLoginSources = [];
+
   static const List<String> _hotKeywords = ['斗破苍穹', '凡人修仙传', '诡秘之主', '大奉打更人', '夜的命名术', '灵境行者'];
 
   @override
   void initState() {
     super.initState();
     _loadHistory();
-    final kw = widget.initialKeyword;
-    if (kw != null && kw.trim().isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _search(kw));
-    }
   }
 
   @override
@@ -81,6 +77,7 @@ class _SearchScreenState extends State<SearchScreen> {
       _isSearching = true;
       _results = [];
       _searchedSources = 0;
+      _needLoginSources.clear();
     });
 
     final sources = await _db.getAllSources(enabled: true);
@@ -105,9 +102,15 @@ class _SearchScreenState extends State<SearchScreen> {
         if (i >= selectedSources.length) return;
         final source = selectedSources[i];
         try {
-          final results = await _engine.search(source, keyword).timeout(const Duration(seconds: 15), onTimeout: () => []);
+          // 每个书源用独立引擎实例：避免并发搜索时共享的 _currentSource/请求头/编码串源
+          final engine = BookSourceEngine();
+          final results = await engine.search(source, keyword).timeout(const Duration(seconds: 15), onTimeout: () => []);
           if (mounted && results.isNotEmpty) {
             setState(() => _results.addAll(results));
+          }
+        } on SourceNeedLoginException {
+          if (mounted) {
+            setState(() => _needLoginSources.add(source.bookSourceName));
           }
         } catch (_) {}
         if (mounted) setState(() => _searchedSources++);
@@ -177,9 +180,15 @@ class _SearchScreenState extends State<SearchScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Row(
                   children: [
-                    TextButton(onPressed: () => setSheetState(() => _selectedSources.clear()), child: const Text('全选')),
+                    TextButton(onPressed: () async {
+                      final all = await _db.getAllSources(enabled: true);
+                      setSheetState(() {
+                        _selectedSources.addAll(all.map((s) => s.bookSourceUrl));
+                      });
+                    }, child: const Text('全选')),
+                    TextButton(onPressed: () => setSheetState(() => _selectedSources.clear()), child: const Text('重置')),
                     const Spacer(),
-                    FilledButton(onPressed: () => Navigator.pop(context), child: const Text('确定')),
+                    FilledButton(onPressed: () => Navigator.pop(context), child: Text(_selectedSources.isEmpty ? '确定(全部源)' : '确定(${_selectedSources.length})')),
                   ],
                 ),
               ),
@@ -288,6 +297,44 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
         ),
         Expanded(child: _groupBySource ? _buildGroupedList() : _buildFlatList()),
+        if (_needLoginSources.isNotEmpty)
+          Material(
+            color: Theme.of(context).colorScheme.errorContainer,
+            child: InkWell(
+              onTap: () => showModalBottomSheet(
+                context: context,
+                builder: (_) => SafeArea(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text('以下书源需要登录（点击书源管理中对应条目的「登录」）：',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                      for (final n in _needLoginSources)
+                        ListTile(dense: true, leading: const Icon(Icons.lock_outline, size: 18), title: Text(n)),
+                    ],
+                  ),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.lock_outline, size: 16, color: Theme.of(context).colorScheme.onErrorContainer),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '${_needLoginSources.length} 个书源需要登录，点击查看',
+                        style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onErrorContainer),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -320,7 +367,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _buildResultTile(SearchBook book) => ListTile(
     leading: book.coverUrl != null && book.coverUrl!.isNotEmpty
-        ? ClipRRect(borderRadius: BorderRadius.circular(4), child: CachedNetworkImage(imageUrl: book.coverUrl!, width: 50, height: 70, fit: BoxFit.cover, placeholder: (_, __) => _buildDefaultCover(book.name), errorWidget: (_, __, ___) => _buildDefaultCover(book.name)))
+        ? ClipRRect(borderRadius: BorderRadius.circular(4), child: Image.network(book.coverUrl!, width: 50, height: 70, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _buildDefaultCover(book.name)))
         : _buildDefaultCover(book.name),
     title: Text(book.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w500)),
     subtitle: Column(
@@ -333,7 +380,7 @@ class _SearchScreenState extends State<SearchScreen> {
       ],
     ),
     trailing: IconButton(icon: const Icon(Icons.add), onPressed: () => _addToShelf(book), tooltip: '加入书架'),
-    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => BookDetailScreen(book: Book(name: book.name, author: book.author, coverUrl: book.coverUrl, intro: book.intro, kind: book.kind, origin: book.origin, noteUrl: book.noteUrl, lastChapter: book.lastChapter, local: false)))),
+    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => BookDetailScreen(book: Book(name: book.name, author: book.author, coverUrl: book.coverUrl, intro: book.intro, kind: book.kind, origin: book.origin, bookUrl: book.bookUrl, noteUrl: book.noteUrl, lastChapter: book.lastChapter, local: false)))),
     onLongPress: () => _showResultMenu(book),
   );
 
@@ -348,7 +395,7 @@ class _SearchScreenState extends State<SearchScreen> {
       ListTile(
         leading: const Icon(Icons.info_outline),
         title: const Text('查看详情'),
-        onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => BookDetailScreen(book: Book(name: book.name, author: book.author, coverUrl: book.coverUrl, intro: book.intro, kind: book.kind, origin: book.origin, noteUrl: book.noteUrl, lastChapter: book.lastChapter, local: false)))); },
+        onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => BookDetailScreen(book: Book(name: book.name, author: book.author, coverUrl: book.coverUrl, intro: book.intro, kind: book.kind, origin: book.origin, bookUrl: book.bookUrl, noteUrl: book.noteUrl, lastChapter: book.lastChapter, local: false)))); },
       ),
       ListTile(
         leading: const Icon(Icons.add),
@@ -358,7 +405,7 @@ class _SearchScreenState extends State<SearchScreen> {
       ListTile(
         leading: const Icon(Icons.swap_horiz),
         title: const Text('换源'),
-        onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => ChangeSourceScreen(book: Book(name: book.name, author: book.author, coverUrl: book.coverUrl, intro: book.intro, kind: book.kind, origin: book.origin, noteUrl: book.noteUrl, lastChapter: book.lastChapter, local: false)))); },
+        onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => ChangeSourceScreen(book: Book(name: book.name, author: book.author, coverUrl: book.coverUrl, intro: book.intro, kind: book.kind, origin: book.origin, bookUrl: book.bookUrl, noteUrl: book.noteUrl, lastChapter: book.lastChapter, local: false)))); },
       ),
       ListTile(
         leading: const Icon(Icons.content_copy),

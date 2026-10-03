@@ -37,6 +37,9 @@ class _ExploreBooksScreenState extends State<ExploreBooksScreen> {
   String _applyPage(String url, int page) {
     var u = url.replaceAll('{{page-1}}', '${page - 1}');
     u = u.replaceAll('{{ page - 1 }}', '${page - 1}');
+    u = u.replaceAllMapped(
+        RegExp(r'\{\{\(page-1\)\*(\d+)\}\}'),
+        (m) => ((page - 1) * int.parse(m.group(1)!)).toString());
     u = u.replaceAll('{{page}}', '$page');
     u = u.replaceAll('{{ page }}', '$page');
     return u;

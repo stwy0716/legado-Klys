@@ -32,7 +32,7 @@ class DatabaseService {
   DatabaseService._internal();
 
   Database? _db;
-  static const int _dbVersion = 7;
+  static const int _dbVersion = 8;
 
   Future<Database> get database async {
     if (_db != null) return _db!;
@@ -63,18 +63,70 @@ class DatabaseService {
         await db.execute('DROP TABLE book_chapters_old');
       } catch (_) {}
     }
+    if (oldVersion < 8) {
+      // v8：让所有表结构与各模型 toMap/fromMap 对齐（旧建表语句缺列会导致写入抛
+      // “table X has no column named Y”）。逐列 ADD，已存在/失败均忽略，保证可重入。
+      await _addColumnsIfMissing(db, 'books', const [
+        'coverUrl TEXT', 'intro TEXT', 'kind TEXT', 'lastChapter TEXT', 'lastChapterIndex INTEGER',
+        'durChapterIndex INTEGER', 'durChapterPos INTEGER', 'durChapterTime INTEGER', 'noteUrl TEXT',
+        'bookUrl TEXT', 'origin TEXT', 'originName TEXT', 'tag TEXT', 'wordCount INTEGER',
+        'canUpdate INTEGER DEFAULT 1', 'local INTEGER DEFAULT 0', 'type INTEGER DEFAULT 0',
+        'group_name TEXT', 'order_num INTEGER', 'latestChapterTime INTEGER', 'lastCheckTime INTEGER',
+        'infoHtml TEXT', 'tocHtml TEXT', 'variable TEXT', 'customOrder INTEGER',
+        'allowUpdate INTEGER DEFAULT 1', 'fileName TEXT', 'customCoverUrl TEXT', 'bookComment TEXT',
+      ]);
+      await _addColumnsIfMissing(db, 'book_sources', const [
+        'loginUi TEXT', 'loginCheckJs TEXT', 'coverDecodeJs TEXT', 'eventListener INTEGER DEFAULT 0',
+        'customButton INTEGER DEFAULT 0', 'enabledCookieJar INTEGER DEFAULT 0', 'concurrentRate TEXT',
+        'homepageModules TEXT', 'checkKeyWord TEXT', 'exploreScreen TEXT', 'ruleImage TEXT',
+        'variableComment TEXT', 'jsLib TEXT', 'variable TEXT',
+      ]);
+      await _addColumnsIfMissing(db, 'bookmarks', const [
+        'bookAuthor TEXT', 'pageIndex INTEGER DEFAULT 0',
+      ]);
+      await _addColumnsIfMissing(db, 'replace_rules', const ['order_num INTEGER']);
+      await _addColumnsIfMissing(db, 'rss_sources', const [
+        'sourceIcon TEXT', 'group_name TEXT', 'sourceComment TEXT', 'searchUrl TEXT', 'sortUrl TEXT',
+        'loginUrl TEXT', 'loginUi TEXT', 'loginCheckJs TEXT', 'coverDecodeJs TEXT', 'header TEXT',
+        'variableComment TEXT', 'concurrentRate TEXT', 'jsLib TEXT', 'startHtml TEXT', 'startStyle TEXT',
+        'startJs TEXT', 'preloadJs TEXT', 'ruleArticles TEXT', 'ruleNextPage TEXT', 'ruleTitle TEXT',
+        'rulePubDate TEXT', 'ruleDescription TEXT', 'ruleImage TEXT', 'ruleLink TEXT', 'ruleContent TEXT',
+        'style TEXT', 'injectJs TEXT', 'contentWhitelist TEXT', 'contentBlacklist TEXT',
+        'shouldOverrideUrlLoading TEXT', 'customOrder INTEGER', 'unreadCount INTEGER DEFAULT 0',
+        'variable TEXT', 'enabledCookieJar INTEGER DEFAULT 0',
+      ]);
+      await _addColumnsIfMissing(db, 'rss_articles', const [
+        'description TEXT', 'author TEXT', 'category TEXT', 'sourceName TEXT',
+        'isRead INTEGER DEFAULT 0', 'starred INTEGER DEFAULT 0', 'readTime INTEGER',
+        'image TEXT', 'content TEXT',
+      ]);
+      await _addColumnsIfMissing(db, 'txt_toc_rules', const [
+        'name TEXT', 'volumeRule TEXT', 'example TEXT', 'serialNumber INTEGER DEFAULT -1',
+      ]);
+    }
     await _onCreate(db, newVersion);
   }
 
+  /// 给已存在的表逐列补列（SQLite 不支持 ADD COLUMN IF NOT EXISTS，逐列 try/catch）
+  Future<void> _addColumnsIfMissing(Database db, String table, List<String> columns) async {
+    for (final col in columns) {
+      try {
+        await db.execute('ALTER TABLE $table ADD COLUMN $col');
+      } catch (_) {
+        // 列已存在等情况：忽略
+      }
+    }
+  }
+
   Future<void> _onCreate(Database db, int version) async {
-    await db.execute('CREATE TABLE IF NOT EXISTS books (name TEXT NOT NULL, author TEXT NOT NULL, origin TEXT, originName TEXT, bookUrl TEXT, coverUrl TEXT, customCoverUrl TEXT, intro TEXT, kind TEXT, latestChapterTitle TEXT, lastChapterTime INTEGER, updateTime INTEGER, lastCheckTime INTEGER, "order" INTEGER, groupId INTEGER, PRIMARY KEY (name, author))');
+    await db.execute('CREATE TABLE IF NOT EXISTS books (name TEXT NOT NULL, author TEXT NOT NULL, coverUrl TEXT, intro TEXT, kind TEXT, lastChapter TEXT, lastChapterIndex INTEGER, durChapterIndex INTEGER, durChapterPos INTEGER, durChapterTime INTEGER, noteUrl TEXT, bookUrl TEXT, origin TEXT, originName TEXT, tag TEXT, wordCount INTEGER, canUpdate INTEGER DEFAULT 1, local INTEGER DEFAULT 0, type INTEGER DEFAULT 0, group_name TEXT, order_num INTEGER, latestChapterTime INTEGER, lastCheckTime INTEGER, infoHtml TEXT, tocHtml TEXT, variable TEXT, customOrder INTEGER, allowUpdate INTEGER DEFAULT 1, fileName TEXT, customCoverUrl TEXT, bookComment TEXT, latestChapterTitle TEXT, lastChapterTime INTEGER, updateTime INTEGER, "order" INTEGER, groupId INTEGER, PRIMARY KEY (name, author))');
     await db.execute('CREATE TABLE IF NOT EXISTS book_chapters (bookName TEXT NOT NULL, bookAuthor TEXT NOT NULL, chapter_index INTEGER NOT NULL, title TEXT, url TEXT, baseUrl TEXT, isVolume INTEGER DEFAULT 0, isPay INTEGER DEFAULT 0, tag TEXT, resourceUrl TEXT, content TEXT, start_pos INTEGER, end_pos INTEGER, variable TEXT, PRIMARY KEY (bookName, bookAuthor, chapter_index))');
-    await db.execute('CREATE TABLE IF NOT EXISTS book_sources (bookSourceUrl TEXT PRIMARY KEY, bookSourceName TEXT, bookSourceGroup TEXT, bookSourceType INTEGER, bookSourceComment TEXT, lastUpdateTime INTEGER, enabled INTEGER DEFAULT 1, enabledExplore INTEGER DEFAULT 1, customOrder INTEGER, respondTime INTEGER, weight INTEGER, header TEXT, loginUrl TEXT, bookUrlPattern TEXT, charset TEXT, searchUrl TEXT, exploreUrl TEXT, ruleSearch TEXT, ruleExplore TEXT, ruleBookInfo TEXT, ruleToc TEXT, ruleContent TEXT, ruleReview TEXT)');
+    await db.execute('CREATE TABLE IF NOT EXISTS book_sources (bookSourceUrl TEXT PRIMARY KEY, bookSourceName TEXT, bookSourceGroup TEXT, bookSourceType INTEGER, bookSourceComment TEXT, lastUpdateTime INTEGER, enabled INTEGER DEFAULT 1, enabledExplore INTEGER DEFAULT 1, customOrder INTEGER, respondTime INTEGER, weight INTEGER, header TEXT, loginUrl TEXT, loginUi TEXT, loginCheckJs TEXT, bookUrlPattern TEXT, charset TEXT, coverDecodeJs TEXT, eventListener INTEGER DEFAULT 0, customButton INTEGER DEFAULT 0, enabledCookieJar INTEGER DEFAULT 0, concurrentRate TEXT, homepageModules TEXT, searchUrl TEXT, checkKeyWord TEXT, exploreUrl TEXT, exploreScreen TEXT, ruleSearch TEXT, ruleExplore TEXT, ruleBookInfo TEXT, ruleToc TEXT, ruleContent TEXT, ruleReview TEXT, ruleImage TEXT, variableComment TEXT, jsLib TEXT, variable TEXT)');
     await db.execute('CREATE TABLE IF NOT EXISTS book_groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, "order" INTEGER, show INTEGER DEFAULT 1, cover TEXT)');
     await db.execute('CREATE TABLE IF NOT EXISTS book_knowledge (id INTEGER PRIMARY KEY AUTOINCREMENT, bookName TEXT, author TEXT, type TEXT, name TEXT, content TEXT, cover TEXT, "order" INTEGER)');
     await db.execute('CREATE TABLE IF NOT EXISTS book_progress (id INTEGER PRIMARY KEY AUTOINCREMENT, bookName TEXT, author TEXT, chapterIndex INTEGER, pagePos INTEGER, duration INTEGER, lastReadTime INTEGER)');
     await db.execute('CREATE TABLE IF NOT EXISTS book_markings (id INTEGER PRIMARY KEY AUTOINCREMENT, bookName TEXT, author TEXT, chapterIndex INTEGER, chapterTitle TEXT, pagePos INTEGER, content TEXT, note TEXT, color INTEGER, createTime INTEGER)');
-    await db.execute('CREATE TABLE IF NOT EXISTS bookmarks (id INTEGER PRIMARY KEY AUTOINCREMENT, bookName TEXT, author TEXT, chapterIndex INTEGER, chapterTitle TEXT, pagePos INTEGER, content TEXT, note TEXT, createTime INTEGER)');
+    await db.execute('CREATE TABLE IF NOT EXISTS bookmarks (id INTEGER PRIMARY KEY AUTOINCREMENT, bookName TEXT, bookAuthor TEXT, chapterIndex INTEGER, chapterTitle TEXT, pageIndex INTEGER DEFAULT 0, content TEXT, createTime INTEGER, author TEXT, pagePos INTEGER, note TEXT)');
     await db.execute('CREATE TABLE IF NOT EXISTS caches (id INTEGER PRIMARY KEY AUTOINCREMENT, bookName TEXT, author TEXT, chapterIndex INTEGER, chapterTitle TEXT, content TEXT, size INTEGER, saveTime INTEGER)');
     await db.execute('CREATE TABLE IF NOT EXISTS cloud_tts_engines (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, type TEXT, url TEXT, apiKey TEXT, region TEXT, voice TEXT, rate INTEGER, pitch INTEGER, enabled INTEGER DEFAULT 1, concurrentRate INTEGER)');
     await db.execute('CREATE TABLE IF NOT EXISTS cookies (id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT, cookie TEXT, lastUpdateTime INTEGER)');
@@ -83,16 +135,16 @@ class DatabaseService {
     await db.execute('CREATE TABLE IF NOT EXISTS highlight_tag_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, pattern TEXT, color INTEGER, enabled INTEGER DEFAULT 1, "order" INTEGER, scope TEXT)');
     await db.execute('CREATE TABLE IF NOT EXISTS http_tts (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, url TEXT, method TEXT, headers TEXT, body TEXT, enabled INTEGER DEFAULT 1, concurrentRate INTEGER)');
     await db.execute('CREATE TABLE IF NOT EXISTS read_records (id INTEGER PRIMARY KEY AUTOINCREMENT, bookName TEXT, author TEXT, duration INTEGER, date INTEGER, chapterIndex INTEGER, pagePos INTEGER)');
-    await db.execute('CREATE TABLE IF NOT EXISTS replace_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, replaceSummary TEXT, replaceRule TEXT, replacement TEXT, enable INTEGER DEFAULT 1, isTitle INTEGER DEFAULT 0, isContent INTEGER DEFAULT 1, isRegex INTEGER DEFAULT 1, scope TEXT, "order" INTEGER)');
-    await db.execute('CREATE TABLE IF NOT EXISTS rss_sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, url TEXT, "group" TEXT, enabled INTEGER DEFAULT 1, lastUpdateTime INTEGER, unreadCount INTEGER DEFAULT 0, icon TEXT, description TEXT)');
-    await db.execute('CREATE TABLE IF NOT EXISTS rss_articles (id INTEGER PRIMARY KEY AUTOINCREMENT, sourceUrl TEXT, title TEXT, link TEXT, desc TEXT, content TEXT, pubDate INTEGER, read INTEGER DEFAULT 0, star INTEGER DEFAULT 0)');
+    await db.execute('CREATE TABLE IF NOT EXISTS replace_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, replaceSummary TEXT, replaceRule TEXT, replacement TEXT, enable INTEGER DEFAULT 1, isTitle INTEGER DEFAULT 0, isContent INTEGER DEFAULT 1, isRegex INTEGER DEFAULT 1, scope TEXT, order_num INTEGER, "order" INTEGER)');
+    await db.execute('CREATE TABLE IF NOT EXISTS rss_sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, url TEXT, sourceIcon TEXT, group_name TEXT, sourceComment TEXT, searchUrl TEXT, sortUrl TEXT, loginUrl TEXT, loginUi TEXT, loginCheckJs TEXT, coverDecodeJs TEXT, header TEXT, variableComment TEXT, concurrentRate TEXT, jsLib TEXT, startHtml TEXT, startStyle TEXT, startJs TEXT, preloadJs TEXT, ruleArticles TEXT, ruleNextPage TEXT, ruleTitle TEXT, rulePubDate TEXT, ruleDescription TEXT, ruleImage TEXT, ruleLink TEXT, ruleContent TEXT, style TEXT, injectJs TEXT, contentWhitelist TEXT, contentBlacklist TEXT, shouldOverrideUrlLoading TEXT, enabled INTEGER DEFAULT 1, customOrder INTEGER, lastUpdateTime INTEGER, unreadCount INTEGER DEFAULT 0, variable TEXT, enabledCookieJar INTEGER DEFAULT 0, "group" TEXT, icon TEXT, description TEXT)');
+    await db.execute('CREATE TABLE IF NOT EXISTS rss_articles (id INTEGER PRIMARY KEY AUTOINCREMENT, sourceUrl TEXT, title TEXT, link TEXT, description TEXT, content TEXT, image TEXT, pubDate INTEGER, author TEXT, category TEXT, sourceName TEXT, isRead INTEGER DEFAULT 0, starred INTEGER DEFAULT 0, readTime INTEGER, star INTEGER DEFAULT 0, desc TEXT, read INTEGER DEFAULT 0)');
     await db.execute('CREATE TABLE IF NOT EXISTS rss_stars (id INTEGER PRIMARY KEY AUTOINCREMENT, sourceUrl TEXT, title TEXT, link TEXT, desc TEXT, content TEXT, starTime INTEGER)');
     await db.execute('CREATE TABLE IF NOT EXISTS rule_subs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, url TEXT, type TEXT, enabled INTEGER DEFAULT 1, lastUpdateTime INTEGER, customOrder INTEGER)');
     await db.execute('CREATE TABLE IF NOT EXISTS search_content_history (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT, searchTime INTEGER)');
     await db.execute('CREATE TABLE IF NOT EXISTS servers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, host TEXT, port INTEGER, path TEXT, username TEXT, password TEXT, enabled INTEGER DEFAULT 1)');
     await db.execute('CREATE TABLE IF NOT EXISTS tag_group_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, pattern TEXT, "group" TEXT, enabled INTEGER DEFAULT 1, "order" INTEGER)');
     await db.execute('CREATE TABLE IF NOT EXISTS translation_caches (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT, target TEXT, original TEXT, translated TEXT, saveTime INTEGER)');
-    await db.execute('CREATE TABLE IF NOT EXISTS txt_toc_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, chapterRule TEXT, enable INTEGER DEFAULT 1, "order" INTEGER)');
+    await db.execute('CREATE TABLE IF NOT EXISTS txt_toc_rules (id INTEGER PRIMARY KEY, name TEXT, chapterRule TEXT, volumeRule TEXT, example TEXT, serialNumber INTEGER DEFAULT -1, enable INTEGER DEFAULT 1, "order" INTEGER)');
     await db.execute('CREATE TABLE IF NOT EXISTS keyboard_assists (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, rule TEXT, enabled INTEGER DEFAULT 1, "order" INTEGER)');
     await db.execute('CREATE TABLE IF NOT EXISTS homepage_modules (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, type INTEGER, sourceUrl TEXT, exploreUrl TEXT, config TEXT, customOrder INTEGER, enabled INTEGER DEFAULT 1)');
     await db.execute('CREATE TABLE IF NOT EXISTS homepage_custom_sets (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, moduleIds TEXT, customOrder INTEGER)');
@@ -101,7 +153,7 @@ class DatabaseService {
   // 书籍DAO
   Future<List<Book>> getAllBooks() async {
     final db = await database;
-    final maps = await db.query('books', orderBy: '"order" ASC');
+    final maps = await db.query('books', orderBy: 'order_num ASC');
     return maps.map((m) => Book.fromMap(m)).toList();
   }
 
@@ -188,6 +240,20 @@ class DatabaseService {
     await db.update('book_sources', source.toMap(), where: 'bookSourceUrl = ?', whereArgs: [source.bookSourceUrl]);
   }
 
+  /// 仅更新书源运行时变量 variable（JS setVariable 落库，避免整行覆盖）。
+  Future<void> updateSourceVariable(String sourceUrl, String variable) async {
+    final db = await database;
+    await db.update('book_sources', {'variable': variable},
+        where: 'bookSourceUrl = ?', whereArgs: [sourceUrl]);
+  }
+
+  /// 仅更新订阅源运行时变量 variable（JS setVariable 落库）。
+  Future<void> updateRssSourceVariable(String sourceUrl, String variable) async {
+    final db = await database;
+    await db.update('rss_sources', {'variable': variable},
+        where: 'url = ?', whereArgs: [sourceUrl]);
+  }
+
   Future<void> deleteSource(String url) async {
     final db = await database;
     await db.delete('book_sources', where: 'bookSourceUrl = ?', whereArgs: [url]);
@@ -208,7 +274,9 @@ class DatabaseService {
 
   Future<void> insertBookGroup(BookGroup group) async {
     final db = await database;
-    await db.insert('book_groups', group.toMap());
+    // 带 id 时按主键覆盖，避免显隐/排序保存产生重复行
+    await db.insert('book_groups', group.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<void> deleteBookGroup(int id) async {
@@ -216,11 +284,34 @@ class DatabaseService {
     await db.delete('book_groups', where: 'id = ?', whereArgs: [id]);
   }
 
+  /// 按名称删除分组元数据
+  Future<void> deleteBookGroupByName(String name) async {
+    final db = await database;
+    await db.delete('book_groups', where: 'name = ?', whereArgs: [name]);
+  }
+
+  /// 重命名分组：同步更新元数据与该分组下所有书籍
+  Future<void> renameBookGroup(String oldName, String newName) async {
+    final db = await database;
+    await db.update('book_groups', {'name': newName},
+        where: 'name = ?', whereArgs: [oldName]);
+    await db.update('books', {'group_name': newName},
+        where: 'group_name = ?', whereArgs: [oldName]);
+  }
+
+  /// 解散分组：分组下书籍回到未分组，并删除元数据
+  Future<void> dissolveBookGroup(String name) async {
+    final db = await database;
+    await db.update('books', {'group_name': null},
+        where: 'group_name = ?', whereArgs: [name]);
+    await db.delete('book_groups', where: 'name = ?', whereArgs: [name]);
+  }
+
   // 书签DAO
   Future<List<Bookmark>> getBookmarks([String? bookName, String? author]) async {
     final db = await database;
     final maps = bookName != null
-        ? await db.query('bookmarks', where: 'bookName = ? AND author = ?', whereArgs: [bookName, author], orderBy: 'createTime DESC')
+        ? await db.query('bookmarks', where: 'bookName = ? AND bookAuthor = ?', whereArgs: [bookName, author], orderBy: 'createTime DESC')
         : await db.query('bookmarks', orderBy: 'createTime DESC');
     return maps.map((m) => Bookmark.fromMap(m)).toList();
   }
@@ -242,7 +333,7 @@ class DatabaseService {
   // 替换规则DAO
   Future<List<ReplaceRule>> getReplaceRules() async {
     final db = await database;
-    final maps = await db.query('replace_rules', orderBy: '"order" ASC');
+    final maps = await db.query('replace_rules', orderBy: 'order_num ASC');
     return maps.map((m) => ReplaceRule.fromMap(m)).toList();
   }
 
@@ -307,45 +398,48 @@ class DatabaseService {
 
   Future<void> toggleRssFavorite(int id, int star) async {
     final db = await database;
-    await db.update('rss_articles', {'star': star}, where: 'id = ?', whereArgs: [id]);
+    // 同时写入旧列 star 与模型读取的 starred，保证列表/收藏两处状态一致
+    await db.update('rss_articles', {'star': star, 'starred': star}, where: 'id = ?', whereArgs: [id]);
   }
 
   Future<List<Map<String, dynamic>>> getStarredRssArticles() async {
     final db = await database;
-    return db.query('rss_articles', where: 'star = 1', orderBy: 'pubDate DESC');
+    return db.query('rss_articles', where: 'star = 1 OR starred = 1', orderBy: 'pubDate DESC');
   }
 
   Future<void> markRssArticleRead(int id) async {
     final db = await database;
-    await db.update('rss_articles', {'read': 1}, where: 'id = ?', whereArgs: [id]);
+    await db.update('rss_articles', {'read': 1, 'isRead': 1, 'readTime': DateTime.now().millisecondsSinceEpoch}, where: 'id = ?', whereArgs: [id]);
   }
 
   /// 设置一篇 RSS 文章已读/未读
   Future<void> setRssArticleRead(int id, bool read) async {
     final db = await database;
-    await db.update('rss_articles', {'read': read ? 1 : 0}, where: 'id = ?', whereArgs: [id]);
+    await db.update('rss_articles', {'read': read ? 1 : 0, 'isRead': read ? 1 : 0}, where: 'id = ?', whereArgs: [id]);
   }
 
   /// 将某订阅源（或全部）文章标为已读
   Future<void> markAllRssRead({String? sourceUrl}) async {
     final db = await database;
+    final values = {'read': 1, 'isRead': 1, 'readTime': DateTime.now().millisecondsSinceEpoch};
     if (sourceUrl == null) {
-      await db.update('rss_articles', {'read': 1});
+      await db.update('rss_articles', values);
     } else {
-      await db.update('rss_articles', {'read': 1}, where: 'sourceUrl = ?', whereArgs: [sourceUrl]);
+      await db.update('rss_articles', values, where: 'sourceUrl = ?', whereArgs: [sourceUrl]);
     }
   }
 
   /// 星标/取消星标一篇 RSS 文章
   Future<void> setRssArticleStar(int id, bool star) async {
     final db = await database;
-    await db.update('rss_articles', {'star': star ? 1 : 0}, where: 'id = ?', whereArgs: [id]);
+    final v = star ? 1 : 0;
+    await db.update('rss_articles', {'star': v, 'starred': v}, where: 'id = ?', whereArgs: [id]);
   }
 
   // TXT目录规则DAO
   Future<List<TxtTocRule>> getTxtTocRules() async {
     final db = await database;
-    final maps = await db.query('txt_toc_rules', orderBy: '"order" ASC');
+    final maps = await db.query('txt_toc_rules', orderBy: 'serialNumber ASC');
     return maps.map((m) => TxtTocRule.fromMap(m)).toList();
   }
 
@@ -391,6 +485,12 @@ class DatabaseService {
   Future<void> clearCaches() async {
     final db = await database;
     await db.delete('caches');
+  }
+
+  /// 收缩数据库，回收已删除数据占用的空闲页（VACUUM 不能在事务中执行）
+  Future<void> vacuum() async {
+    final db = await database;
+    await db.execute('VACUUM');
   }
 
   /// 清空所有书籍的章节正文缓存（保留目录结构，仅把 content 置空）
@@ -493,6 +593,29 @@ class DatabaseService {
   Future<void> saveCookie(String url, String cookie) async {
     final db = await database;
     await db.insert('cookies', {'url': url, 'cookie': cookie, 'lastUpdateTime': DateTime.now().millisecondsSinceEpoch}, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// 删除指定 URL（精确）与同域的持久化 Cookie
+  Future<void> deleteCookie(String url) async {
+    final db = await database;
+    String? host;
+    try { host = Uri.parse(url).host; } catch (_) {}
+    if (host != null && host.isNotEmpty) {
+      await db.delete('cookies', where: 'url = ?', whereArgs: [url]);
+      // 同域 cookie 一并清理（url 可能以域名/完整地址两种形式保存）
+      final all = await db.query('cookies', columns: ['url']);
+      for (final row in all) {
+        final u = row['url']?.toString() ?? '';
+        try {
+          final h = Uri.parse(u).host;
+          if (h == host || h.endsWith('.$host') || host.endsWith(h)) {
+            await db.delete('cookies', where: 'url = ?', whereArgs: [u]);
+          }
+        } catch (_) {}
+      }
+    } else {
+      await db.delete('cookies', where: 'url = ?', whereArgs: [url]);
+    }
   }
 
   // 书籍知识DAO

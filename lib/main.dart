@@ -7,6 +7,7 @@ import 'package:legado_md3/ui/main/main_screen.dart';
 import 'package:legado_md3/ui/welcome/welcome_screen.dart';
 import 'package:legado_md3/help/storage/crash_log_helper.dart';
 import 'package:legado_md3/help/storage/auto_sync_service.dart';
+import 'package:legado_md3/common/app_navigator.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -59,6 +60,7 @@ class LegadoApp extends StatelessWidget {
       child: Consumer<AppTheme>(
         builder: (context, appTheme, _) {
           return MaterialApp(
+            navigatorKey: appNavigatorKey,
             title: '阅读 MD3',
             debugShowCheckedModeBanner: false,
             theme: appTheme.lightTheme,

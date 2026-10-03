@@ -6,9 +6,12 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:legado_md3/data/model/rss_source.dart';
 import 'package:legado_md3/data/model/rss_article.dart';
+import 'package:legado_md3/help/storage/source_importer.dart';
 import 'package:legado_md3/ui/rss/rss_read_screen.dart';
 import 'package:legado_md3/ui/rss/rss_source_edit_screen.dart';
 import 'package:legado_md3/ui/rss/rss_favorites_screen.dart';
+import 'package:legado_md3/ui/rss/rss_articles_screen.dart';
+import 'package:legado_md3/ui/rss/rss_source_login_screen.dart';
 import 'package:legado_md3/data/local/app_database.dart';
 import 'package:legado_md3/help/http/rss_service.dart';
 
@@ -26,6 +29,7 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
   List<RssArticle> _articles = [];
   bool _isLoading = true;
   bool _showSources = true;
+  String? _filterSourceUrl; // 非空时文章列表仅显示该订阅源
 
   @override
   void initState() {
@@ -57,22 +61,33 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
   Future<void> _parseAndSave(String raw) async {
     if (raw.trim().isEmpty) return;
     try {
-      final data = jsonDecode(raw);
-      final list = data is List ? data : [data];
-      int n = 0;
-      for (final m in list) {
-        if (m is Map) {
-          try { await _db.insertRssSource(RssSource.fromJson(Map<String, dynamic>.from(m))); n++; } catch (_) {}
-        }
-      }
+      final r = await SourceImporter.importRaw(raw);
       await _loadData();
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('导入 $n 个订阅源')));
-    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('解析失败: $e'))); }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(r.isEmpty ? '未识别到有效的订阅源/书源' : r.toString())),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('解析失败: $e')));
+      }
+    }
   }
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     _sources = await _db.getRssSources();
+    _articles = await _db.getRssArticles(_filterSourceUrl);
+    if (mounted) setState(() => _isLoading = false);
+  }
+
+  /// 返回全部文章
+  Future<void> _showAllArticles() async {
+    setState(() {
+      _filterSourceUrl = null;
+      _isLoading = true;
+    });
     _articles = await _db.getRssArticles();
     if (mounted) setState(() => _isLoading = false);
   }
@@ -118,7 +133,7 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
     _loadData();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('刷新完成: 共 $total 篇新文章')),
+        SnackBar(content: Text('刷新完成: 共抓取 $total 篇文章')),
       );
     }
   }
@@ -141,8 +156,13 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
           IconButton(icon: const Icon(Icons.file_download_outlined), tooltip: '导入订阅源', onPressed: _showImportMenu),
           PopupMenuButton<String>(
             onSelected: (value) {
-              if (value == 'sources') setState(() => _showSources = true);
-              if (value == 'articles') setState(() => _showSources = false);
+              if (value == 'sources') {
+                setState(() => _showSources = true);
+              } else if (value == 'articles') {
+                _filterSourceUrl = null;
+                setState(() => _showSources = false);
+                _loadData();
+              }
             },
             itemBuilder: (context) => [
               PopupMenuItem(value: 'sources', child: Text('订阅源 (${_sources.length})')),
@@ -208,6 +228,8 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
                 ),
               ],
             ),
+            onTap: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => RssArticlesScreen(source: source))),
             onLongPress: () => _showSourceOptions(source),
           ),
         );
@@ -216,18 +238,47 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
   }
 
   Widget _buildArticlesList() {
-    if (_articles.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.article_outlined, size: 80, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            const Text('暂无文章'),
-          ],
-        ),
-      );
-    }
+    final filterName = _filterSourceUrl == null
+        ? null
+        : _sources.where((s) => s.sourceUrl == _filterSourceUrl).map((s) => s.name).cast<String?>().firstWhere((_) => true, orElse: () => '该订阅源');
+    return Column(
+      children: [
+        if (_filterSourceUrl != null)
+          Material(
+            color: Theme.of(context).colorScheme.secondaryContainer,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Row(children: [
+                const Icon(Icons.filter_alt, size: 16),
+                const SizedBox(width: 8),
+                Expanded(child: Text('仅显示「$filterName」的文章', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12))),
+                TextButton.icon(
+                  onPressed: _showAllArticles,
+                  icon: const Icon(Icons.clear, size: 16),
+                  label: const Text('全部'),
+                ),
+              ]),
+            ),
+          ),
+        Expanded(child: _articles.isEmpty ? _buildEmptyArticles() : _buildArticleItems()),
+      ],
+    );
+  }
+
+  Widget _buildEmptyArticles() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.article_outlined, size: 80, color: Colors.grey[400]),
+          const SizedBox(height: 16),
+          const Text('暂无文章'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildArticleItems() {
     return ListView.separated(
       padding: const EdgeInsets.all(16),
       itemCount: _articles.length,
@@ -250,7 +301,14 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
           ),
           onTap: () async {
             if (article.id != null) await _db.markRssArticleRead(article.id!);
-            if (mounted) Navigator.push(context, MaterialPageRoute(builder: (_) => RssReadScreen(article: article)));
+            if (mounted) {
+              final src = _sources
+                  .where((s) => s.sourceUrl == article.sourceUrl)
+                  .cast<RssSource?>()
+                  .firstWhere((_) => true, orElse: () => null);
+              await Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => RssReadScreen(article: article, source: src)));
+            }
             _loadData();
           },
           onLongPress: () => _showArticleOptions(article),
@@ -269,8 +327,15 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
             ListTile(
               leading: const Icon(Icons.article_outlined),
               title: const Text('查看文章'),
-              onTap: () { Navigator.pop(context); setState(() => _showSources = false); },
+              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => RssArticlesScreen(source: source))); },
             ),
+            if ((source.loginUrl ?? '').trim().isNotEmpty ||
+                (source.loginUi ?? '').trim().isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.login),
+                title: const Text('登录'),
+                onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => RssSourceLoginScreen(source: source))); },
+              ),
             ListTile(
               leading: const Icon(Icons.refresh),
               title: const Text('刷新'),

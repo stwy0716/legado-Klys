@@ -14,7 +14,7 @@ class AppConfig {
   static const bool enableWebService = true;
   static const bool enableRss = true;
   static const bool enableManga = true;
-  static const bool enableAiChat = false; // 按需求暂不启用 AI 聊天
+  static const bool enableAiChat = true; // AI 读书助手（离线兜底 + 可配置 OpenAI 兼容接口）
 
   /// 本地书籍支持的扩展名
   static const List<String> localBookExt = ['txt', 'epub'];

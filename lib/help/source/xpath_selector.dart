@@ -13,7 +13,15 @@ import 'package:html/parser.dart' as html_parser;
 class XpathSelector {
   /// 从 HTML 字符串按 xpath 提取字符串列表
   static List<String> selectText(String html, String xpath) {
-    final doc = html_parser.parse(html);
+    var h = html.trim();
+    final low = h.toLowerCase();
+    // 表格片段修复（对齐原版）：</td> → <tr>、</tr>/</tbody> → <table>
+    if (low.endsWith('</td>')) {
+      h = '<tr>$h</tr>';
+    } else if (low.endsWith('</tr>') || low.endsWith('</tbody>')) {
+      h = '<table>$h</table>';
+    }
+    final doc = html_parser.parse(h);
     return selectTextFromNode(doc, xpath);
   }
 

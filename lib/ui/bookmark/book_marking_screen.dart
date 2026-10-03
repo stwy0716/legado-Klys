@@ -53,8 +53,10 @@ class _BookMarkingScreenState extends State<BookMarkingScreen> {
                           leading: Container(width: 4, height: 40, color: Color(marking.color ?? 0xFF6750A4)),
                           title: Text(marking.content, maxLines: 2, overflow: TextOverflow.ellipsis),
                           subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text('第${marking.chapterIndex + 1}章: ${marking.chapterTitle}', style: const TextStyle(fontSize: 12)),
-                            if (marking.note != null && marking.note!.isNotEmpty) Text('笔记: ${marking.note}', style: const TextStyle(fontSize: 12, color: Colors.blue)),
+                            if (widget.bookName.isEmpty)
+                              Text('《${marking.bookName}》', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                            Text('第${marking.chapterIndex + 1}章: ${marking.chapterTitle}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+                            if (marking.note != null && marking.note!.isNotEmpty) Text('笔记: ${marking.note}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: Colors.blue)),
                           ]),
                           trailing: IconButton(icon: const Icon(Icons.delete_outline, color: Colors.red), onPressed: () async {
                             if (marking.id != null) {

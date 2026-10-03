@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:legado_md3/help/web/web_service.dart';
 import 'package:legado_md3/ui/book/source/source_manage_screen.dart';
 import 'package:legado_md3/ui/config/replace_rule_screen.dart';
@@ -20,8 +22,9 @@ import 'package:legado_md3/ui/file/file_manage_screen.dart';
 import 'package:legado_md3/ui/bookmark/book_marking_screen.dart';
 import 'package:legado_md3/ui/config/lab_config_screen.dart';
 import 'package:legado_md3/ui/main/subscribe/subscribe_screen.dart';
+import 'package:legado_md3/help/storage/crash_log_helper.dart';
 import 'package:legado_md3/help/config/app_config.dart';
-import 'package:legado_md3/ui/main/my/about_screen.dart';
+import 'package:legado_md3/ui/ai/ai_chat_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -76,7 +79,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           _buildSectionHeader('其他'),
           if (AppConfig.enableAiChat)
-            _buildMenuItem(context, Icons.smart_toy_outlined, 'AI聊天', 'AI助手对话', () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('AI聊天功能开发中')))),
+            _buildMenuItem(context, Icons.smart_toy_outlined, 'AI聊天', 'AI助手对话', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AiChatScreen()))),
           _buildMenuItem(context, Icons.rss_feed_outlined, 'RSS订阅', '订阅源管理', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscribeScreen()))),
           _buildMenuItem(context, Icons.cloud_outlined, '云盘同步', 'WebDAV云同步', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BackupScreen()))),
           _buildMenuItem(context, Icons.subscriptions_outlined, '规则订阅', '订阅书源规则', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RuleSubscriptionScreen()))),
@@ -92,7 +95,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _buildMenuItem(context, Icons.cleaning_services_outlined, '缓存管理', '书籍缓存', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CacheManageScreen()))),
           _buildMenuItem(context, Icons.backup_outlined, '备份恢复', '数据备份', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BackupScreen()))),
           _buildMenuItem(context, Icons.folder_outlined, '文件管理', '本地文件', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FileManageScreen()))),
-          _buildMenuItem(context, Icons.info_outline, '软件信息', '版本/更新/开源协议', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AboutScreen()))),
+          _buildMenuItem(context, Icons.info_outline, '关于', '应用信息', () => _showAbout(context)),
 
           const Divider(),
 
@@ -111,11 +114,107 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
 
           const SizedBox(height: 24),
-          const Center(child: Text('legado v1.0.0', style: TextStyle(color: Colors.grey, fontSize: 12))),
+          const Center(child: Text('Legado MD3 v3.30.0', style: TextStyle(color: Colors.grey, fontSize: 12))),
           const SizedBox(height: 16),
         ],
       ),
     );
+  }
+
+  Future<void> _checkUpdate() async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(const SnackBar(content: Text('正在检查更新...')));
+    try {
+      final dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 10), receiveTimeout: const Duration(seconds: 15)));
+      final resp = await dio.get('https://api.github.com/repos/stwy0716/legado-K/releases/latest');
+      final tag = (resp.data['tag_name'] ?? '').toString();
+      final body = (resp.data['body'] ?? '').toString();
+      final htmlUrl = (resp.data['html_url'] ?? 'https://github.com/stwy0716/legado-K/releases').toString();
+      final latest = tag.replaceAll(RegExp(r'[^0-9.]'), '').split('.').map((e) => int.tryParse(e) ?? 0).toList();
+      final cur = [3, 29, 0];
+      bool hasNew = false;
+      for (var i = 0; i < 3; i++) {
+        final l = i < latest.length ? latest[i] : 0;
+        if (l > cur[i]) { hasNew = true; break; }
+        if (l < cur[i]) break;
+      }
+      if (!mounted) return;
+      if (hasNew) {
+        showDialog(context: context, builder: (d) => AlertDialog(
+          title: Text('发现新版本 $tag'),
+          content: Text(body.isEmpty ? '是否前往下载最新版本？' : body),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(d), child: const Text('稍后')),
+            FilledButton(onPressed: () { Navigator.pop(d); launchUrl(Uri.parse(htmlUrl), mode: LaunchMode.externalApplication); }, child: const Text('前往下载')),
+          ],
+        ));
+      } else {
+        messenger.showSnackBar(const SnackBar(content: Text('当前已是最新版本')));
+      }
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('检查更新失败: $e')));
+    }
+  }
+
+  void _showAbout(BuildContext context) {
+    showDialog(context: context, builder: (context) => AlertDialog(
+      title: const Text('关于'),
+      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Legado MD3', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        const Text('版本: 3.30.0'),
+        const SizedBox(height: 4),
+        const Text('基于Legado MD3风格的跨平台阅读应用，支持Android和iOS'),
+        const Divider(height: 24),
+        ListTile(
+          dense: true, leading: const Icon(Icons.update, size: 20), title: const Text('检查更新'),
+          onTap: () { Navigator.pop(context); _checkUpdate(); },
+        ),
+        ListTile(
+          dense: true, leading: const Icon(Icons.code, size: 20), title: const Text('GitHub项目'),
+          onTap: () { Navigator.pop(context); launchUrl(Uri.parse('https://github.com/stwy0716/legado-K'), mode: LaunchMode.externalApplication); },
+        ),
+        ListTile(
+          dense: true, leading: const Icon(Icons.people_outline, size: 20), title: const Text('贡献者'),
+          onTap: () { Navigator.pop(context); showDialog(context: context, builder: (c) => const AlertDialog(title: Text('贡献者'), content: Text('Legado开源社区\n\n感谢所有贡献者的支持'))); },
+        ),
+        ListTile(
+          dense: true, leading: const Icon(Icons.privacy_tip_outlined, size: 20), title: const Text('隐私政策'),
+          onTap: () { Navigator.pop(context); showDialog(context: context, builder: (c) => const AlertDialog(title: Text('隐私政策'), content: Text('本应用不会收集任何个人信息，所有数据均存储在本地设备上。'))); },
+        ),
+        ListTile(
+          dense: true, leading: const Icon(Icons.gavel, size: 20), title: const Text('开源协议'),
+          onTap: () { Navigator.pop(context); showDialog(context: context, builder: (c) => const AlertDialog(title: Text('开源协议'), content: Text('GNU General Public License v3.0'))); },
+        ),
+        ListTile(
+          dense: true, leading: const Icon(Icons.warning_amber_outlined, size: 20), title: const Text('免责声明'),
+          onTap: () { Navigator.pop(context); showDialog(context: context, builder: (c) => const AlertDialog(title: Text('免责声明'), content: Text('本应用仅供学习交流使用，不提供任何书籍内容，所有书源均由用户自行添加。'))); },
+        ),
+        ListTile(
+          dense: true, leading: const Icon(Icons.bug_report, size: 20), title: const Text('崩溃日志'),
+          onTap: () { Navigator.pop(context); _showCrashLog(); },
+        ),
+      ])),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭'))],
+    ));
+  }
+
+  Future<void> _showCrashLog() async {
+    final logs = await CrashLogHelper.instance.readLogs();
+    if (!mounted) return;
+    showDialog(context: context, builder: (c) => AlertDialog(
+      title: const Text('崩溃日志'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: logs.trim().isEmpty
+            ? const Text('暂无崩溃日志', style: TextStyle(color: Colors.grey))
+            : SingleChildScrollView(child: SelectableText(logs, style: const TextStyle(fontSize: 11, fontFamily: 'monospace'))),
+      ),
+      actions: [
+        if (logs.trim().isNotEmpty) TextButton(onPressed: () async { await CrashLogHelper.instance.clear(); if (mounted) { Navigator.pop(c); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已清空崩溃日志'))); } }, child: const Text('清空')),
+        TextButton(onPressed: () => Navigator.pop(c), child: const Text('关闭')),
+      ],
+    ));
   }
 
   Widget _buildSectionHeader(String title) => Padding(

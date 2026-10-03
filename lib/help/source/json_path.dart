@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// 轻量 JSONPath 解析器，对齐 Legado 书源常用语法
 /// 支持：
 ///  $.a.b.c        点路径
@@ -10,6 +12,10 @@ class JsonPath {
   /// 按 JSONPath 取值，返回命中的所有节点
   static List<dynamic> select(dynamic root, String path) {
     if (path.trim().isEmpty) return root == null ? [] : [root];
+
+    // {$.rule} 内嵌规则：先解析内嵌再走主路径（对齐原版 innerRule）
+    final expanded = _expandNested(root, path);
+    path = expanded;
 
     // 多路径 ||
     if (path.contains('||')) {
@@ -121,6 +127,48 @@ class JsonPath {
         _recursiveFind(v, key, out);
       }
     }
+  }
+
+  /// 处理 {$.rule} 内嵌规则：{$.b} 先解析后用结果替换，支持嵌套与引号。
+  static String _expandNested(dynamic root, String path) {
+    if (!path.contains('{\$')) return path;
+    final sb = StringBuffer();
+    var i = 0;
+    while (i < path.length) {
+      final c = path[i];
+      if (c == '{' && i + 1 < path.length && path[i + 1] == '\$') {
+        var depth = 1;
+        var j = i + 2;
+        var quote = '';
+        while (j < path.length) {
+          final cj = path[j];
+          if (quote.isNotEmpty) {
+            if (cj == quote) quote = '';
+            j++;
+            continue;
+          }
+          if (cj == '"' || cj == "'") {
+            quote = cj;
+            j++;
+            continue;
+          }
+          if (cj == '{') depth++;
+          if (cj == '}') {
+            depth--;
+            if (depth == 0) break;
+          }
+          j++;
+        }
+        final inner = path.substring(i + 1, j);
+        final v = selectFirst(root, inner);
+        sb.write(v == null ? '' : (v is Map || v is List ? jsonEncode(v) : v.toString()));
+        i = j + 1;
+      } else {
+        sb.write(c);
+        i++;
+      }
+    }
+    return sb.toString();
   }
 }
 

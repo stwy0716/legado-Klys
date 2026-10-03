@@ -32,6 +32,22 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+
+            <!-- 深度链接：legado://import/{bookSource|rssSource}?src=<url> 网页一键导入 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="legado"/>
+            </intent-filter>
+
+            <!-- 分享文本（从浏览器分享书源/订阅源链接） -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="text/plain"/>
+            </intent-filter>
+
             <!-- 用本应用打开本地书籍 txt/epub -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
@@ -54,6 +70,46 @@
                 <data android:pathPattern=".*\\..*\\.txt"/>
                 <data android:pathPattern=".*\\.epub"/>
                 <data android:pathPattern=".*\\..*\\.epub"/>
+            </intent-filter>
+
+            <!-- 用本应用打开书源/订阅源 JSON 文件 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="content"/>
+                <data android:scheme="file"/>
+                <data android:mimeType="application/json"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="content"/>
+                <data android:scheme="file"/>
+                <data android:host="*"/>
+                <data android:pathPattern=".*\\.json"/>
+                <data android:pathPattern=".*\\..*\\.json"/>
+            </intent-filter>
+
+            <!-- 用本应用打开 PDF 文件 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="content"/>
+                <data android:scheme="file"/>
+                <data android:mimeType="application/pdf"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="content"/>
+                <data android:scheme="file"/>
+                <data android:host="*"/>
+                <data android:pathPattern=".*\\.pdf"/>
+                <data android:pathPattern=".*\\..*\\.pdf"/>
             </intent-filter>
         </activity>
         <meta-data

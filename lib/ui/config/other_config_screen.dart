@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 /// 其他设置 - 对齐原版OtherConfigScreen
 class OtherConfigScreen extends StatefulWidget {
@@ -106,7 +107,15 @@ class _OtherConfigScreenState extends State<OtherConfigScreen> {
             ));
           }),
         ListTile(dense: true, leading: const Icon(Icons.cleaning_services_outlined), title: const Text('清理WebView数据'),
-          onTap: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('WebView数据已清理')))),
+          onTap: () async {
+            try {
+              await InAppWebViewController.clearAllCache();
+              await CookieManager.instance().deleteAllCookies();
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('WebView数据已清理')));
+            } catch (e) {
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('清理失败: $e')));
+            }
+          }),
         _sw('记录日志', 'recordLog', 'oc_recordLog'),
         const SizedBox(height: 24),
       ]),

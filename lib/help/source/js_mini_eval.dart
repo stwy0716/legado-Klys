@@ -14,9 +14,8 @@ class JsMiniEvaluator {
   final Map<String, dynamic> vars;
   JsMiniEvaluator({Map<String, dynamic>? initial}) : vars = Map.of(initial ?? const {});
 
-  /// 求值入口；[fallbackResult] 作为内置 result 初值；[vars] 为外部注入的全局变量（书源 variable/jsLib 前置）
-  static String? eval(String script,
-      {String? result, String? key, int? page, String? baseUrl, Map<String, dynamic>? vars}) {
+  /// 求值入口；[fallbackResult] 作为内置 result 初值。
+  static String? eval(String script, {String? result, String? key, int? page, String? baseUrl}) {
     try {
       final e = JsMiniEvaluator(initial: {
         if (result != null) 'result': result,
@@ -24,7 +23,6 @@ class JsMiniEvaluator {
         if (key != null) 'key': key,
         if (page != null) 'page': page,
         if (baseUrl != null) 'baseUrl': baseUrl,
-        ...?vars,
       });
       return e.run(script);
     } catch (_) {
@@ -58,10 +56,9 @@ class JsMiniEvaluator {
         last = _evalExpr(stmt);
       }
     }
-    // 返回最后一个表达式求值结果；无表达式时才退回 result
-    if (last != null) return _toStr(last);
+    // 优先返回 result
     if (vars['result'] != null) return _toStr(vars['result']);
-    return null;
+    return last == null ? null : _toStr(last);
   }
 
   bool _isComparison(String stmt) => RegExp(r'===|!==|==|!=|>=|<=').hasMatch(stmt.split('=')[0]);

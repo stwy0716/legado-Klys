@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:legado_md3/data/local/app_database.dart';
 
 /// 下载缓存配置 - 对齐原版DownloadCacheConfigScreen
 class DownloadCacheConfigScreen extends StatefulWidget {
@@ -10,6 +11,7 @@ class DownloadCacheConfigScreen extends StatefulWidget {
 }
 
 class _DownloadCacheConfigScreenState extends State<DownloadCacheConfigScreen> {
+  final _db = DatabaseService();
   int _threads = 16;
   int _bookThreads = 3;
   int _preDownload = 5;
@@ -89,13 +91,46 @@ class _DownloadCacheConfigScreenState extends State<DownloadCacheConfigScreen> {
           }),
         _section('其他'),
         ListTile(dense: true, leading: const Icon(Icons.cleaning_services), title: const Text('清理缓存'),
-          onTap: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('缓存已清理')))),
+          subtitle: const Text('清空已缓存的章节正文与临时数据（不影响书架与目录）', style: TextStyle(fontSize: 11)),
+          onTap: _clearCache),
         ListTile(dense: true, leading: const Icon(Icons.compress), title: const Text('收缩数据库'), subtitle: const Text('回收数据库空闲空间', style: TextStyle(fontSize: 11)),
-          onTap: () async {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('数据库收缩完成')));
-          }),
+          onTap: _vacuum),
         const SizedBox(height: 24),
       ]),
     );
+  }
+
+  Future<void> _clearCache() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('清理缓存'),
+        content: const Text('将清空所有已缓存的章节正文与临时数据，确定继续吗？'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('清理')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await _db.clearChapterContent();
+      await _db.clearCaches();
+      PaintingBinding.instance.imageCache.clear();
+      PaintingBinding.instance.imageCache.clearLiveImages();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('缓存已清理')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('清理失败: $e')));
+    }
+  }
+
+  Future<void> _vacuum() async {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('正在收缩数据库...')));
+    try {
+      await _db.vacuum();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('数据库收缩完成')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('收缩失败: $e')));
+    }
   }
 }

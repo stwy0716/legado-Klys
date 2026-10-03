@@ -25,7 +25,7 @@ class BackupService {
     final backup = <String, dynamic>{
       'version': '1.0',
       'backupTime': DateTime.now().toIso8601String(),
-      'appVersion': '1.0.0',
+      'appVersion': '3.30.0',
     };
 
     if (includeBooks) {

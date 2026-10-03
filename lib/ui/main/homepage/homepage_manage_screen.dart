@@ -81,6 +81,62 @@ class _HomepageManageScreenState extends State<HomepageManageScreen> {
     }
   }
 
+  /// 配置模块关联的发现书源（首页模块点击后据此打开发现书籍列表）
+  Future<void> _configureModule(HomepageModule module) async {
+    final sources = await _db.getAllSources(enabled: true);
+    final exploreSources = sources.where((s) => (s.exploreUrl ?? '').trim().isNotEmpty).toList();
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('关联书源 · ${module.name}'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text('选择该模块在首页展示哪个书源的发现内容', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              ),
+              if (exploreSources.isEmpty)
+                const Padding(padding: EdgeInsets.all(16), child: Text('暂无含发现地址的启用书源'))
+              else
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: exploreSources.map((s) => RadioListTile<String>(
+                      dense: true,
+                      value: s.bookSourceUrl,
+                      groupValue: module.sourceUrl,
+                      title: Text(s.bookSourceName, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(s.bookSourceUrl, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10)),
+                      onChanged: (v) async {
+                        module.sourceUrl = v;
+                        module.exploreUrl = null; // 留空则首页取该书源第一个发现分类
+                        await _db.updateHomepageModule(module);
+                        setDialogState(() {});
+                        setState(() {});
+                      },
+                    )).toList(),
+                  ),
+                ),
+            ]),
+          ),
+          actions: [
+            if (module.sourceUrl != null)
+              TextButton(onPressed: () async {
+                module.sourceUrl = null;
+                module.exploreUrl = null;
+                await _db.updateHomepageModule(module);
+                if (mounted) { Navigator.pop(context); setState(() {}); }
+              }, child: const Text('清除关联')),
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭')),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -107,7 +163,10 @@ class _HomepageManageScreenState extends State<HomepageManageScreen> {
                   child: ListTile(
                     leading: Icon(_getTypeIcon(module.type)),
                     title: Text(module.name),
-                    subtitle: Text(_getTypeName(module.type)),
+                    subtitle: Text(module.sourceUrl == null
+                        ? '${_getTypeName(module.type)} · 未关联书源（点击配置）'
+                        : '${_getTypeName(module.type)} · 已关联'),
+                    onTap: () => _configureModule(module),
                     trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                       Switch(value: module.enabled, onChanged: (v) { setState(() => module.enabled = v); _db.updateHomepageModule(module); }),
                       IconButton(icon: const Icon(Icons.delete_outline, color: Colors.red), onPressed: () async { if (module.id != null) { await _db.deleteHomepageModule(module.id!); _loadModules(); } }),

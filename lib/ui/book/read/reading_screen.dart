@@ -104,7 +104,9 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
       if (_prefetching.contains(i)) return;
       _prefetching.add(i);
       try {
-        final content = await _engine.getContent(source, _chapters[i].url);
+        final content = await _engine.getContent(source, _chapters[i].url,
+            bookInfo: widget.book.jsContext(),
+            chapter: _chapters[i].jsContext(widget.book.bookUrl));
         if (content != null && content.isNotEmpty) {
           await _db.updateChapterContent(widget.book.name, widget.book.author, i, content);
         }
@@ -227,7 +229,8 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
       final sources = await _db.getAllSources(enabled: true);
       final source = sources.where((s) => s.bookSourceUrl == widget.book.origin).firstOrNull;
       if (source != null && widget.book.noteUrl != null) {
-        final chapters = await _engine.getToc(source, widget.book.noteUrl!);
+        final chapters = await _engine.getToc(source, widget.book.noteUrl!,
+            bookInfo: widget.book.jsContext());
         if (chapters.isNotEmpty) {
           _chapters = chapters;
           await _db.saveChapters(widget.book.name, widget.book.author, chapters);
@@ -253,7 +256,10 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
         if (source != null && chapter.url.isNotEmpty) {
           // 加载替换净化规则
           final replaceRules = await _db.getReplaceRules();
-          final content = await _engine.getContent(source, chapter.url, replaceRules: replaceRules);
+          final content = await _engine.getContent(source, chapter.url,
+              replaceRules: replaceRules,
+              bookInfo: widget.book.jsContext(),
+              chapter: chapter.jsContext(widget.book.bookUrl));
           if (content != null) {
             _content = content;
             await _db.updateChapterContent(widget.book.name, widget.book.author, index, content);
@@ -1099,7 +1105,10 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
           final source = sources.where((s) => s.bookSourceUrl == widget.book.origin).firstOrNull;
           if (source != null) {
             final replaceRules = await _db.getReplaceRules();
-            final content = await _engine.getContent(source, chapter.url, replaceRules: replaceRules);
+            final content = await _engine.getContent(source, chapter.url,
+                replaceRules: replaceRules,
+                bookInfo: widget.book.jsContext(),
+                chapter: chapter.jsContext(widget.book.bookUrl));
             if (content != null) {
               await _db.updateChapterContent(widget.book.name, widget.book.author, i, content);
               cached++;
@@ -1374,7 +1383,10 @@ class _ReadingScreenState extends State<ReadingScreen> with SingleTickerProvider
       final source = sources.where((s) => s.bookSourceUrl == widget.book.origin).firstOrNull;
       if (source == null || ch.url.isEmpty) return null;
       final rules = await _db.getReplaceRules();
-      final content = await _engine.getContent(source, ch.url, replaceRules: rules);
+      final content = await _engine.getContent(source, ch.url,
+          replaceRules: rules,
+          bookInfo: widget.book.jsContext(),
+          chapter: ch.jsContext(widget.book.bookUrl));
       if (content != null && content.isNotEmpty) {
         await _db.updateChapterContent(widget.book.name, widget.book.author, ch.index, content);
         ch.content = content;

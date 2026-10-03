@@ -69,6 +69,23 @@ class Book {
 
   String get uniqueKey => '${origin ?? ''}_$name';
 
+  /// 传给书源 JS（ruleBookInfo/ruleToc/ruleContent）的书籍上下文。
+  Map<String, dynamic> jsContext() => {
+    'bookUrl': bookUrl ?? noteUrl ?? '',
+    'name': name,
+    'author': author,
+    'coverUrl': coverUrl ?? '',
+    'intro': intro ?? '',
+    'kind': kind ?? '',
+    'lastChapter': lastChapter ?? '',
+    'tocUrl': noteUrl ?? bookUrl ?? '',
+    'durChapterIndex': durChapterIndex,
+    'durChapterTitle': '',
+    'origin': origin ?? originName ?? '',
+    'originName': originName ?? '',
+    'variable': variable,
+  };
+
   Map<String, dynamic> toMap() => {
     'name': name,
     'author': author,
