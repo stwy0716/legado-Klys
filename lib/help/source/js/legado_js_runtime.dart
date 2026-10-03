@@ -633,7 +633,7 @@ class WebViewLegadoJs implements LegadoJs {
     final url = q['url'] ?? '';
     if (url.isEmpty) throw Exception('ttf/query: 缺少 url');
     final bytes = await _fetchNativeBytes(url);
-    final map = TtfFontParser.parse(bytes);
+    final map = TtfFontParser.parse(Uint8List.fromList(bytes));
     return jsonEncode(map ?? <String, String>{});
   }
 

@@ -664,7 +664,7 @@ class _SourceEditScreenState extends State<SourceEditScreen> with SingleTickerPr
               Text(r'$.data.list[*].name'),
               SizedBox(height: 8),
               Text('正则', style: TextStyle(fontWeight: FontWeight.bold)),
-              Text('@Regex:正则表达式@@替换结果，:正则$1 取第1个捕获组'),
+              Text('@Regex:正则表达式@@替换结果，:正则\$1 取第1个捕获组'),
               SizedBox(height: 8),
               Text('变量存取', style: TextStyle(fontWeight: FontWeight.bold)),
               Text('@put:{键:值} 保存变量、@get:{键} 读取变量（跨字段/跨阶段传值）'),
